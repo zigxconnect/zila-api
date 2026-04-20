@@ -61,9 +61,10 @@ export class AuthService {
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Store in Redis with 10-minute expiry
-    await redis.set(`otp:${email}`, otp, { ex: 600 });
+    const normalizedEmail = email.toLowerCase();
+    
+    // Store OTP in Redis with 10 minute expiration
+    await redis.set(`otp:${normalizedEmail}`, otp, { ex: 600 });
 
     // Send Email
     const emailResult = await sendOTPEmail(email, otp);
@@ -78,13 +79,15 @@ export class AuthService {
    * Verify OTP
    */
   static async verifyOTP(email: string, otp: string) {
-    const storedOtp = await redis.get(`otp:${email}`);
+    const normalizedEmail = email.toLowerCase();
+    const storedOtp = await redis.get(`otp:${normalizedEmail}`);
 
     if (!storedOtp) {
       return { success: false, message: 'OTP expired or not found' };
     }
 
-    if (storedOtp !== otp) {
+    // Upstash Redis may return numeric OTPs as numbers, so we explicitly cast to string for comparison
+    if (String(storedOtp) !== String(otp)) {
       return { success: false, message: 'Invalid OTP' };
     }
 
@@ -97,22 +100,44 @@ export class AuthService {
     // Check students
     const { data: student } = await supabase
       .from('student_profiles')
-      .select('user_id, full_name, role')
+      .select('*') // Fetching everything for a complete profile
       .eq('email', email)
       .maybeSingle();
 
     if (student) {
-      userData = { id: student.user_id, name: student.full_name, role: student.role || 'student' };
+      userData = { 
+        id: student.user_id, 
+        name: student.full_name, 
+        role: student.role || 'student',
+        details: {
+          university: student.university,
+          field: student.field_of_study,
+          bio: student.about,
+          skills: student.hard_skills,
+          location: student.location,
+          username: student.username
+        }
+      };
     } else {
       // Check companies
       const { data: company } = await supabase
         .from('company_profiles')
-        .select('user_id, company_name, role')
+        .select('*')
         .eq('email', email)
         .maybeSingle();
       
       if (company) {
-        userData = { id: company.user_id, name: company.company_name, role: company.role || 'company' };
+        userData = { 
+          id: company.user_id, 
+          name: company.company_name, 
+          role: company.role || 'company',
+          details: {
+            industry: company.industry,
+            description: company.description,
+            website: company.website_url,
+            location: company.location
+          }
+        };
       }
     }
 
@@ -137,7 +162,9 @@ export class AuthService {
       user: {
         id: userData.id,
         email: email,
-        name: userData.name
+        name: userData.name,
+        role: userData.role,
+        details: userData.details
       }
     };
   }

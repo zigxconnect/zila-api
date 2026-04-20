@@ -34,11 +34,20 @@ app.use('/api/auth', async (req, res, next) => {
 setupSwagger(app);
 
 // Routes
+import internshipRoutes from './routes/internship.routes';
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/internship', internshipRoutes);
+
+import programsRoutes from './routes/programs.routes';
+import eventsRoutes from './routes/events.routes';
+
+app.use('/api/programs', programsRoutes);
+app.use('/api/events', eventsRoutes);
 
 // Error Handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
