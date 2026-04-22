@@ -45,9 +45,11 @@ app.use('/api/internship', internshipRoutes);
 
 import programsRoutes from './routes/programs.routes';
 import eventsRoutes from './routes/events.routes';
+import profileRoutes from './routes/profile.routes';
 
 app.use('/api/programs', programsRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/profile', profileRoutes);
 
 // Error Handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
