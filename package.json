@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "rm -rf dist && tsc && echo 'BUILD SUCCESSFUL! Mapping dist folder:' && find dist -maxdepth 2",
+    "postinstall": "npm run build",
     "start": "node ./index.js"
   },
   "keywords": [],
