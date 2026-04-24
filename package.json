@@ -2,11 +2,11 @@
   "name": "zila-api",
   "version": "1.0.0",
   "description": "Zigex Agent API",
-  "main": "dist/index.js",
+  "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "rm -rf dist && tsc",
-    "start": "node index.js"
+    "build": "rm -rf dist && tsc && echo 'Build complete. Listing dist:' && ls -R dist",
+    "start": "node ./index.js"
   },
   "keywords": [],
   "author": "",
