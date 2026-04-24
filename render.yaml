@@ -3,6 +3,7 @@ services:
     name: zila-api
     runtime: node
     plan: free
+    rootDirectory: zila-api
     buildCommand: npm install && npm run build
     startCommand: npm run start
     envVars:
