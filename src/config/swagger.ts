@@ -16,6 +16,10 @@ const options: swaggerJsdoc.Options = {
       },
     },
     servers: [
+      ...(env.RENDER_EXTERNAL_URL ? [{
+        url: env.RENDER_EXTERNAL_URL,
+        description: 'Production server',
+      }] : []),
       {
         url: `http://localhost:${env.PORT}`,
         description: 'Development server',

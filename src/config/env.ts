@@ -13,6 +13,7 @@ const envSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z.string(),
   EMAIL_FROM: z.string().email(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  RENDER_EXTERNAL_URL: z.string().optional(),
 });
 
 const _env = envSchema.safeParse(process.env);
