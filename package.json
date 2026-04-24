@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "rm -rf dist && tsc && echo 'Build complete. Listing dist:' && ls -R dist",
+    "build": "rm -rf dist && tsc && echo 'BUILD SUCCESSFUL! Mapping dist folder:' && find dist -maxdepth 2",
     "start": "node ./index.js"
   },
   "keywords": [],
