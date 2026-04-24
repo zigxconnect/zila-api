@@ -2,20 +2,29 @@
 try {
   require('./dist/index.js');
 } catch (err) {
-  console.error("Failed to load ./dist/index.js. Checking directory structure...");
+  console.error("❌ Failed to load ./dist/index.js. Performing system diagnostics...");
   const fs = require('fs');
   const path = require('path');
   
-  const listDir = (dir) => {
+  const listDir = (dir, label) => {
     try {
-      console.log(`Contents of ${dir}:`, fs.readdirSync(dir));
+      if (fs.existsSync(dir)) {
+        console.log(`📂 ${label} (${dir}):`, fs.readdirSync(dir));
+      } else {
+        console.error(`🚫 ${label} does not exist: ${dir}`);
+      }
     } catch (e) {
-      console.error(`Could not read ${dir}:`, e.message);
+      console.error(`⚠️ Could not read ${label}:`, e.message);
     }
   };
 
-  listDir(__dirname);
-  listDir(path.join(__dirname, 'dist'));
+  console.log("Current Working Directory:", process.cwd());
+  console.log("Filename:", __filename);
+  console.log("Dirname:", __dirname);
+
+  listDir(__dirname, "Root Directory");
+  listDir(path.join(__dirname, 'dist'), "Dist Folder");
+  listDir(path.join(__dirname, 'src'), "Src Folder");
   
   throw err;
 }
