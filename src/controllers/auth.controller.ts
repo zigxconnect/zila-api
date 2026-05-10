@@ -57,4 +57,10 @@ export class AuthController {
       return res.status(500).json({ message: error.message });
     }
   }
+
+  static async logout(req: Request, res: Response) {
+    // In a stateless JWT system, logout is primarily handled by the client
+    // removing the token. This endpoint exists for logging and future-proofing.
+    return res.status(200).json({ message: 'Logged out successfully' });
+  }
 }

@@ -71,4 +71,17 @@ router.post('/request-otp', AuthController.requestOTP);
  */
 router.post('/verify-otp', AuthController.verifyOTP);
 
+/**
+ * @openapi
+ * /api/auth/logout:
+ *   post:
+ *     summary: Logout from the session
+ *     description: Ends the current session. In a JWT system, this primarily serves as an indicator for the client to delete the token.
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: Logged out successfully
+ */
+router.post('/logout', AuthController.logout);
+
 export default router;
