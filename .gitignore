@@ -23,3 +23,8 @@ Thumbs.db
 # Scratch/Debug files
 scratch/
 test-results/
+
+/src/generated/prisma
+
+.claude/
+.winsurf/
