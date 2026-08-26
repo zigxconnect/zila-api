@@ -46,16 +46,17 @@ app.use('/api/internship', internshipRoutes);
 import programsRoutes from './routes/programs.routes';
 import eventsRoutes from './routes/events.routes';
 import profileRoutes from './routes/profile.routes';
+import submitRoutes from './routes/submit.report.routes'
 
 app.use('/api/programs', programsRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/profile', profileRoutes);
-
+app.use('/api', submitRoutes);
 // Error Handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
-  res.status(500).json({ 
-    message: env.NODE_ENV === 'production' ? 'Internal server error' : err.message 
+  res.status(500).json({
+    message: env.NODE_ENV === 'production' ? 'Internal server error' : err.message
   });
 });
 
