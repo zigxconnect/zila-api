@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma"
@@ -12,13 +10,303 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================
+// EXISTING MODELS
+// ============================================
+
 model Submit_report {
-  id              String @id @default(cuid())
-  title           String 
+  id              String   @id @default(cuid())
+  title           String
   summary         String
   notes           String?
-  status          String @default("draft")
+  status          String   @default("draft")
   submittedAt     DateTime @default(now())
-  submittedBy     String  //Refer the student name from the supabase database
-  studentEmail    String // Refer the student email from the supabase database
+  submittedBy     String   // Student name from supabase
+  studentEmail    String   // Student email from supabase
+}
+
+// ============================================
+// NEW MODELS FOR ENHANCED FUNCTIONALITY
+// ============================================
+
+// Cohorts/Sessions - Groups students by program/internship period
+model Cohort {
+  id              String   @id @default(cuid())
+  name            String   // e.g., "Summer 2024 - Web Development"
+  programId       String   // Reference to Supabase programs table
+  programType     String   // "internship" | "program" | "bootcamp"
+  startDate       DateTime
+  endDate         DateTime
+  isActive        Boolean  @default(true)
+  maxStudents     Int?
+  description     String?
+  department      String   // "web", "ml", "mobile", "embedded"
+  level           String   // "beginner", "intermediate", "advanced"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  students        CohortStudent[]
+  tasks           Task[]
+  documents       Document[]
+
+  @@index([programId])
+  @@index([isActive])
+  @@index([department, level])
+}
+
+// Join table for students in cohorts
+model CohortStudent {
+  id              String   @id @default(cuid())
+  cohortId        String
+  studentId       String   // auth.users.id from Supabase
+  studentEmail    String
+  studentName     String
+  joinedAt        DateTime @default(now())
+  status          String   @default("active") // "active", "completed", "dropped"
+
+  // Relations
+  cohort          Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  tasksSubmitted  TaskSubmission[]
+  gamificationPoints GamificationPoint[]
+  weeklyScores    WeeklyScore[]
+
+  @@unique([cohortId, studentId])
+  @@index([studentId])
+  @@index([cohortId])
+}
+
+// Tasks assigned by supervisors
+model Task {
+  id              String   @id @default(cuid())
+  cohortId        String
+  title           String
+  description     String
+  type            String   // "assignment", "project", "exercise", "pr_review"
+  dueDate         DateTime?
+  maxPoints       Int      @default(100)
+  difficulty      String   // "easy", "medium", "hard"
+  skills          String[] // Array of skills: ["react", "typescript", "api"]
+
+  // Assignment details
+  githubRequired  Boolean  @default(false)
+  prRequired      Boolean  @default(false) // Requires PR submission
+  requiresReview  Boolean  @default(true)
+
+  // Supervisor info
+  assignedBy      String   // Supervisor user_id from Supabase
+  assignedByName  String
+  assignedByEmail String
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  cohort          Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  submissions     TaskSubmission[]
+
+  @@index([cohortId])
+  @@index([dueDate])
+}
+
+// Task submissions by students
+model TaskSubmission {
+  id              String   @id @default(cuid())
+  taskId          String
+  studentId       String   // From CohortStudent
+
+  // Submission content
+  title           String
+  description     String
+  content         String   // Markdown or text content
+
+  // GitHub integration
+  githubRepoUrl   String?
+  githubPrUrl     String?
+  githubBranch    String?
+  commitHash      String?
+
+  // Files/attachments
+  attachments     String[] // URLs to uploaded files
+
+  // Grading
+  status          String   @default("submitted") // "draft", "submitted", "under_review", "approved", "rejected", "needs_revision"
+  pointsEarned    Int?
+  feedback        String?
+  reviewedBy      String?  // Supervisor user_id
+  reviewedAt      DateTime?
+
+  submittedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  student         CohortStudent @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([studentId])
+  @@index([status])
+}
+
+// GitHub repositories linked by supervisors
+model GitHubRepository {
+  id              String   @id @default(cuid())
+  cohortId        String?  // Optional: can be cohort-specific or general
+  name            String
+  url             String
+  description     String?
+  type            String   // "learning_material", "template", "example", "project_base"
+  isActive        Boolean  @default(true)
+
+  // Metadata
+  addedBy         String   // Supervisor user_id
+  addedByName     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([cohortId])
+}
+
+// Documents uploaded by supervisors (for RAG system)
+model Document {
+  id              String   @id @default(cuid())
+  cohortId        String
+  title           String
+  description     String?
+  fileUrl         String   // URL to the uploaded file (Supabase storage)
+  fileType        String   // "pdf", "docx", "md", "txt"
+  fileSize        Int      // Size in bytes
+  category        String   // "guide", "tutorial", "reference", "documentation"
+
+  // RAG metadata
+  isIndexed       Boolean  @default(false) // Whether it's been processed for RAG
+  vectorStoreId   String?  // Reference to vector store if using one
+  keywords        String[] // For search
+
+  // Access control
+  uploadedBy      String   // Supervisor user_id
+  uploadedByName  String
+  isPublic        Boolean  @default(true) // Visible to all students in cohort
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  cohort          Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+
+  @@index([cohortId])
+  @@index([category])
+  @@index([isIndexed])
+}
+
+// Gamification points system
+model GamificationPoint {
+  id              String   @id @default(cuid())
+  studentId       String
+  pointType       String   // "task_completion", "early_submission", "code_quality", "peer_help", "streak", "achievement"
+  points          Int
+  reason          String
+  relatedTaskId   String?  // If related to a task
+
+  awardedAt       DateTime @default(now())
+
+  // Relations
+  student         CohortStudent @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([pointType])
+}
+
+// Achievements/Badges
+model Achievement {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  description     String
+  icon            String   // Emoji or icon identifier
+  category        String   // "consistency", "quality", "speed", "collaboration"
+  pointsRequired  Int      // Total points needed to unlock
+  condition       String   // JSON string describing unlock condition
+
+  createdAt       DateTime @default(now())
+
+  // Relations
+  earnedBy        StudentAchievement[]
+}
+
+// Students' earned achievements
+model StudentAchievement {
+  id              String   @id @default(cuid())
+  studentId       String   // CohortStudent id
+  achievementId   String
+  earnedAt        DateTime @default(now())
+
+  // Relations
+  achievement     Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, achievementId])
+  @@index([studentId])
+}
+
+// Weekly scoring and evaluation
+model WeeklyScore {
+  id              String   @id @default(cuid())
+  studentId       String
+  cohortId        String
+  weekNumber      Int      // Week 1, 2, 3, etc.
+
+  // Scoring metrics
+  tasksCompleted  Int      @default(0)
+  tasksOnTime     Int      @default(0)
+  totalPoints     Int      @default(0)
+  codeQuality     Float?   // 0-100 score
+  commitFrequency Int      @default(0)
+  prQuality       Float?   // 0-100 score
+
+  // Calculated scores
+  overallScore    Float    // 0-100 percentage
+  rank            Int?     // Rank within cohort for this week
+
+  // AI Analysis
+  aiAnalysis      String?  // AI-generated insights and recommendations
+  strengths       String[] // Array of identified strengths
+  improvements    String[] // Array of improvement areas
+
+  // Email tracking
+  emailSent       Boolean  @default(false)
+  emailSentAt     DateTime?
+
+  weekStartDate   DateTime
+  weekEndDate     DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  student         CohortStudent @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, weekNumber])
+  @@index([studentId])
+  @@index([cohortId])
+  @@index([weekNumber])
+}
+
+// Supervisor feedback/comments
+model SupervisorFeedback {
+  id              String   @id @default(cuid())
+  studentId       String   // auth.users.id from Supabase
+  supervisorId    String   // auth.users.id from Supabase
+  cohortId        String
+
+  feedbackType    String   // "weekly", "task_specific", "general"
+  relatedTaskId   String?
+
+  rating          Int?     // 1-5 rating
+  comment         String
+  isPrivate       Boolean  @default(false) // Whether visible to student
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([supervisorId])
+  @@index([cohortId])
 }

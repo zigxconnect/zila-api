@@ -35,6 +35,16 @@ setupSwagger(app);
 
 // Routes
 import internshipRoutes from './routes/internship.routes';
+import programsRoutes from './routes/programs.routes';
+import eventsRoutes from './routes/events.routes';
+import profileRoutes from './routes/profile.routes';
+import submitRoutes from './routes/submit.report.routes';
+import cohortsRoutes from './routes/cohorts.routes';
+import tasksRoutes from './routes/tasks.routes';
+import gamificationRoutes from './routes/gamification.routes';
+import githubRoutes from './routes/github.routes';
+import scoresRoutes from './routes/scores.routes';
+import documentsRoutes from './routes/documents.routes';
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -42,16 +52,18 @@ app.get('/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/internship', internshipRoutes);
-
-import programsRoutes from './routes/programs.routes';
-import eventsRoutes from './routes/events.routes';
-import profileRoutes from './routes/profile.routes';
-import submitRoutes from './routes/submit.report.routes'
-
 app.use('/api/programs', programsRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api', submitRoutes);
+
+// New routes for enhanced functionality
+app.use('/api/cohorts', cohortsRoutes);
+app.use('/api/tasks', tasksRoutes);
+app.use('/api/gamification', gamificationRoutes);
+app.use('/api/github', githubRoutes);
+app.use('/api/scores', scoresRoutes);
+app.use('/api/documents', documentsRoutes);
 // Error Handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
