@@ -15,7 +15,42 @@ const prisma = new PrismaClient({ adapter });
 
 const router = Router();
 
-//The post route to submit a report 
+/**
+ * @swagger
+ * /api/submit-report:
+ *   post:
+ *     summary: Creates a report for the authenticated user
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *        required: true
+ *        content:
+ *          application/json:
+ *            schema:
+ *               type: object
+ *               required: [title, summary, status]
+ *               properties:
+ *                    title:
+ *                        type: string
+ *                        example: "Typescript Mastery"
+ *                    summary:
+ *                        type: string
+ *                        example: "Typescript is JS with strict types"
+ *                    status:
+ *                        type: string
+ *                        example: "draft"
+ *                    notes:
+ *                        type: string
+ *                        example: "Typescript has interface, types etc"
+ *     responses:
+ *       200:
+ *         description: Report created
+ *       404:
+ *         description: Student profile not found
+ *       500:
+ *         description: Internal server error
+ */
 router.post(
   "/submit-report",
   authMiddleware,
@@ -34,6 +69,10 @@ router.post(
           success: false,
           message: "Cannot submit before 3PM",
         });
+      }
+
+      if (!title || !status || !summary) {
+        return res.status(400).json({ error: "Missing required fields." });
       }
 
       if (role === "student") {
@@ -78,6 +117,23 @@ router.post(
 );
 
 //The get route to see an interns reports that he submitted
+
+/**
+ * @swagger
+ * /api/submit-report:
+ *   get:
+ *     summary: Gets all report for the authenticated user
+ *     tags: [Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Reports retrieved successfully
+ *       404:
+ *         description: Student profile not found
+ *       500:
+ *         description: Internal server error
+ */
 router.get(
   "/submit-report",
   authMiddleware,
@@ -99,17 +155,17 @@ router.get(
         }
         // return res.json({ profile: student, type: "student" });
         const studentEmail = student?.email;
-        const submittedBy = student.full_name
+        const submittedBy = student.full_name;
 
         const internReport = await prisma.submit_report.findMany({
-            where: {studentEmail : studentEmail},
-            orderBy: {submittedAt : 'desc'},
-            select : {
-                title: true,
-                summary: true,
-                notes : true,
-                status : true
-            }
+          where: { studentEmail: studentEmail },
+          orderBy: { submittedAt: "desc" },
+          select: {
+            title: true,
+            summary: true,
+            notes: true,
+            status: true,
+          },
         });
 
         return res.status(201).json({
@@ -128,4 +184,4 @@ router.get(
   },
 );
 
-export default router
+export default router;
