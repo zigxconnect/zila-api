@@ -42,6 +42,10 @@ model Cohort {
   description     String?
   department      String   // "web", "ml", "mobile", "embedded"
   level           String   // "beginner", "intermediate", "advanced"
+  supervisorId    String?  // Supabase user_id or profile_id of assigned supervisor (group chat admin)
+  supervisorName  String?  // Name of assigned supervisor
+  supervisorEmail String?  // Email of assigned supervisor
+  githubRepoUrl   String?  // Linked GitHub repository for course materials and assignments
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -53,6 +57,7 @@ model Cohort {
   @@index([programId])
   @@index([isActive])
   @@index([department, level])
+  @@index([supervisorId])
 }
 
 // Join table for students in cohorts
@@ -62,6 +67,8 @@ model CohortStudent {
   studentId       String   // auth.users.id from Supabase
   studentEmail    String
   studentName     String
+  avatarUrl       String?  // Avatar URL for group chat & profile display
+  role            String   @default("intern") // "intern", "lead_intern"
   joinedAt        DateTime @default(now())
   status          String   @default("active") // "active", "completed", "dropped"
 
