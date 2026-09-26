@@ -93,7 +93,7 @@ router.post(
           data: {
             title,
             summary,
-            notes,
+            notes: notes || "",
             status,
             studentEmail,
             submittedBy,
@@ -120,7 +120,7 @@ router.post(
 
 /**
  * @swagger
- * /api/submit-report:
+ * /api/my-reports:
  *   get:
  *     summary: Gets all report for the authenticated user
  *     tags: [Reports]
@@ -135,7 +135,7 @@ router.post(
  *         description: Internal server error
  */
 router.get(
-  "/submit-report",
+  "/my-reports",
   authMiddleware,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
