@@ -4,9 +4,8 @@
   "description": "Zigex Agent API",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "npx prisma generate && rm -rf dist && tsc && echo 'BUILD SUCCESSFUL! Mapping dist folder:' && find dist -maxdepth 2",
-    "postinstall": "npm run build",
+    "build": "npx prisma generate && rm -rf dist && tsc && cp -r src/generated dist/ && echo 'BUILD SUCCESSFUL!'",
+    "test": "npm run build && node --test tests/*.test.ts",
     "start": "node ./index.js",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
