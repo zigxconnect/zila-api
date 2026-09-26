@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase';
 import { prisma } from '../config/prisma';
+import { CacheService } from './cache.service';
 
 export interface ChatGroupMember {
   id: string;
@@ -306,13 +307,17 @@ export class CohortService {
   }
 
   /**
-   * Get all cohorts enrolled by the student
+   * Get all cohorts enrolled by the student (Cached for sub-millisecond retrieval)
    */
   static async getStudentCohorts(userId: string) {
-    // Proactively sync latest placements
-    await this.syncStudentPlacements(userId);
+    const cacheKey = `cohorts:student:${userId}`;
+    const cached = CacheService.get<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
-    const enrolled = await prisma.cohortStudent.findMany({
+    // First check existing cohorts in Neon DB to respond immediately
+    let enrolled = await prisma.cohortStudent.findMany({
       where: { studentId: userId },
       include: {
         cohort: {
@@ -326,43 +331,67 @@ export class CohortService {
       orderBy: { joinedAt: 'desc' },
     });
 
-    return enrolled.map((item) => ({
+    // If student has no enrolled cohorts yet in Neon DB, trigger placement sync from Supabase
+    if (enrolled.length === 0) {
+      await this.syncStudentPlacements(userId);
+      enrolled = await prisma.cohortStudent.findMany({
+        where: { studentId: userId },
+        include: {
+          cohort: {
+            include: {
+              _count: {
+                select: { students: true, tasks: true, documents: true },
+              },
+            },
+          },
+        },
+        orderBy: { joinedAt: 'desc' },
+      });
+    }
+
+    const result = enrolled.map((item) => ({
       ...item.cohort,
       enrollmentStatus: item.status,
       joinedAt: item.joinedAt,
       studentRole: item.role,
     }));
+
+    CacheService.set(cacheKey, result, 120); // 2 minutes TTL
+    return result;
   }
 
   /**
-   * Get fellow accepted interns in the same cohort
+   * Get fellow accepted interns in the same cohort (Cached for high performance)
    */
   static async getCohortPeers(cohortId: string, currentUserId: string) {
-    const peers = await prisma.cohortStudent.findMany({
-      where: {
-        cohortId,
-        status: 'active',
-        studentId: { not: currentUserId },
-      },
-      include: {
-        gamificationPoints: {
-          select: { points: true },
+    const cacheKey = `peers:cohort:${cohortId}:${currentUserId}`;
+    return CacheService.wrap(cacheKey, 120, async () => {
+      const peers = await prisma.cohortStudent.findMany({
+        where: {
+          cohortId,
+          status: 'active',
+          studentId: { not: currentUserId },
         },
-      },
-      orderBy: { joinedAt: 'asc' },
-    });
+        include: {
+          gamificationPoints: {
+            select: { points: true },
+          },
+        },
+        orderBy: { joinedAt: 'asc' },
+      });
 
-    return peers.map((p) => ({
-      id: p.id,
-      studentId: p.studentId,
-      studentName: p.studentName,
-      studentEmail: p.studentEmail,
-      avatarUrl: p.avatarUrl,
-      role: p.role,
-      joinedAt: p.joinedAt,
-      status: p.status,
-      totalPoints: p.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
-    }));
+      return peers.map((p) => ({
+        id: p.id,
+        studentId: p.studentId,
+        studentName: p.studentName,
+        studentEmail: p.studentEmail,
+        avatarUrl: p.avatarUrl,
+        role: p.role,
+        joinedAt: p.joinedAt,
+        status: p.status,
+        totalPoints: p.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
+      }));
+    });
   }
 
   /**
@@ -370,56 +399,59 @@ export class CohortService {
    * Cohort metadata, supervisor as Admin, and all accepted student members.
    */
   static async getBluetoothChatContext(cohortId: string, currentUserId: string): Promise<BluetoothChatContext> {
-    const cohort = await prisma.cohort.findUnique({
-      where: { id: cohortId },
-      include: {
-        students: {
-          include: {
-            gamificationPoints: {
-              select: { points: true },
+    const cacheKey = `chat:cohort:${cohortId}`;
+    return CacheService.wrap(cacheKey, 180, async () => {
+      const cohort = await prisma.cohort.findUnique({
+        where: { id: cohortId },
+        include: {
+          students: {
+            include: {
+              gamificationPoints: {
+                select: { points: true },
+              },
             },
           },
         },
-      },
+      });
+
+      if (!cohort) {
+        throw new Error(`Cohort with ID ${cohortId} not found`);
+      }
+
+      const members: ChatGroupMember[] = cohort.students.map((student) => ({
+        id: student.id,
+        studentId: student.studentId,
+        name: student.studentName,
+        email: student.studentEmail,
+        avatarUrl: student.avatarUrl,
+        role: student.role,
+        isAdmin: false,
+        totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
+      }));
+
+      const supervisorAdmin = cohort.supervisorId
+        ? {
+            id: cohort.supervisorId,
+            name: cohort.supervisorName || 'Supervisor',
+            email: cohort.supervisorEmail || '',
+            role: 'supervisor',
+            isAdmin: true as const,
+          }
+        : null;
+
+      // Room ID format suitable for Bluetooth advertising and discovery:
+      const chatRoomId = `zigex-cohort-${cohort.id.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+
+      return {
+        chatRoomId,
+        cohortId: cohort.id,
+        cohortName: cohort.name,
+        department: cohort.department,
+        supervisorAdmin,
+        members,
+        totalMembers: members.length + (supervisorAdmin ? 1 : 0),
+      };
     });
-
-    if (!cohort) {
-      throw new Error(`Cohort with ID ${cohortId} not found`);
-    }
-
-    const members: ChatGroupMember[] = cohort.students.map((student) => ({
-      id: student.id,
-      studentId: student.studentId,
-      name: student.studentName,
-      email: student.studentEmail,
-      avatarUrl: student.avatarUrl,
-      role: student.role,
-      isAdmin: false,
-      totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
-    }));
-
-    const supervisorAdmin = cohort.supervisorId
-      ? {
-          id: cohort.supervisorId,
-          name: cohort.supervisorName || 'Supervisor',
-          email: cohort.supervisorEmail || '',
-          role: 'supervisor',
-          isAdmin: true as const,
-        }
-      : null;
-
-    // Room ID format suitable for Bluetooth advertising and discovery:
-    // e.g. "zigex-cohort-<cleanId>"
-    const chatRoomId = `zigex-cohort-${cohort.id.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-
-    return {
-      chatRoomId,
-      cohortId: cohort.id,
-      cohortName: cohort.name,
-      department: cohort.department,
-      supervisorAdmin,
-      members,
-      totalMembers: members.length + (supervisorAdmin ? 1 : 0),
-    };
   }
 }
+
