@@ -34,9 +34,6 @@ app.use('/api/auth', async (req, res, next) => {
 setupSwagger(app);
 
 // Routes
-import internshipRoutes from './routes/internship.routes';
-import programsRoutes from './routes/programs.routes';
-import eventsRoutes from './routes/events.routes';
 import profileRoutes from './routes/profile.routes';
 import submitRoutes from './routes/submit.report.routes';
 import cohortsRoutes from './routes/cohorts.routes';
@@ -51,13 +48,10 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
-app.use('/api/internship', internshipRoutes);
-app.use('/api/programs', programsRoutes);
-app.use('/api/events', eventsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api', submitRoutes);
 
-// New routes for enhanced functionality
+// Core Polyglot Routes (Prisma + Neon DB with Supabase Sync)
 app.use('/api/cohorts', cohortsRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/gamification', gamificationRoutes);
