@@ -310,3 +310,19 @@ model SupervisorFeedback {
   @@index([supervisorId])
   @@index([cohortId])
 }
+
+model ChatMessage {
+  id         String   @id                    // we use the id that comes from the BLE message
+  roomId     String
+  senderId   String
+  senderName String
+  role       String                          // "student" or "supervisor"
+  isAdmin    Boolean  @default(false)
+  type       String                          // "text" | "code" | "task_link" | "announcement"
+  content    String
+  timestamp  DateTime
+  createdAt  DateTime @default(now())        // extra safety field (when it was saved in DB)
+
+  @@index([roomId])                          // makes queries by room fast
+  @@index([roomId, timestamp])               // useful for getting messages in order
+}
