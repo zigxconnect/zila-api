@@ -4,26 +4,40 @@
  * to avoid repeated remote database round-trips.
  */
 
-interface CacheEntry<T> {
+export interface CacheEntry<T> {
   value: T;
   expiresAt: number;
+  createdAt: number;
+  hits: number;
+  sizeBytes: number;
 }
 
 export class CacheService {
   private static store = new Map<string, CacheEntry<any>>();
+  private static hits = 0;
+  private static misses = 0;
+  private static sets = 0;
+  private static deletes = 0;
+  private static startTime = Date.now();
 
   /**
    * Retrieve cached value if present and not expired
    */
   static get<T>(key: string): T | null {
     const entry = this.store.get(key);
-    if (!entry) return null;
-
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(key);
+    if (!entry) {
+      this.misses++;
       return null;
     }
 
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      this.misses++;
+      return null;
+    }
+
+    this.hits++;
+    entry.hits++;
     return entry.value as T;
   }
 
@@ -31,8 +45,23 @@ export class CacheService {
    * Set value in cache with TTL in seconds
    */
   static set<T>(key: string, value: T, ttlSeconds: number = 120): void {
-    const expiresAt = Date.now() + ttlSeconds * 1000;
-    this.store.set(key, { value, expiresAt });
+    const now = Date.now();
+    const expiresAt = now + ttlSeconds * 1000;
+    let sizeBytes = 0;
+    try {
+      sizeBytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
+    } catch {
+      sizeBytes = 256;
+    }
+
+    this.store.set(key, {
+      value,
+      expiresAt,
+      createdAt: now,
+      hits: 0,
+      sizeBytes,
+    });
+    this.sets++;
   }
 
   /**
