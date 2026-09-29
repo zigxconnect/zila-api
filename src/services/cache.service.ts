@@ -21,6 +21,21 @@ export interface CacheKeyInfo {
   sizeBytes: number;
 }
 
+export interface CacheStats {
+  status: 'active' | 'degraded' | 'idle';
+  totalKeys: number;
+  hits: number;
+  misses: number;
+  sets: number;
+  deletes: number;
+  hitRatio: string;
+  hitRatioPercentage: number;
+  memoryUsageEstimateBytes: number;
+  uptimeSeconds: number;
+  defaultTTL: number;
+  keys: CacheKeyInfo[];
+}
+
 export class CacheService {
   private static store = new Map<string, CacheEntry<any>>();
   private static hits = 0;
@@ -97,19 +112,35 @@ export class CacheService {
   /**
    * Invalidate a specific cache key
    */
-  static del(key: string): void {
-    this.store.delete(key);
+  static del(key: string): boolean {
+    const deleted = this.store.delete(key);
+    if (deleted) this.deletes++;
+    return deleted;
   }
 
   /**
    * Invalidate all keys matching a prefix or pattern
    */
-  static invalidatePrefix(prefix: string): void {
-    for (const key of this.store.keys()) {
+  static invalidatePrefix(prefix: string): number {
+    let count = 0;
+    for (const key of Array.from(this.store.keys())) {
       if (key.startsWith(prefix)) {
         this.store.delete(key);
+        this.deletes++;
+        count++;
       }
     }
+    return count;
+  }
+
+  /**
+   * Clear all cached keys
+   */
+  static clear(): number {
+    const count = this.store.size;
+    this.deletes += count;
+    this.store.clear();
+    return count;
   }
 
   /**
@@ -145,6 +176,43 @@ export class CacheService {
     }
 
     return list;
+  }
+
+  /**
+   * Get comprehensive telemetry and performance stats
+   */
+  static getStats(): CacheStats {
+    this.cleanExpired();
+    const keys = this.getKeys();
+    const totalRequests = this.hits + this.misses;
+    const hitRatioPercentage = totalRequests > 0 ? (this.hits / totalRequests) * 100 : 0;
+    const memoryUsageEstimateBytes = keys.reduce((acc, k) => acc + k.sizeBytes, 0);
+
+    return {
+      status: this.store.size > 0 ? 'active' : 'idle',
+      totalKeys: this.store.size,
+      hits: this.hits,
+      misses: this.misses,
+      sets: this.sets,
+      deletes: this.deletes,
+      hitRatio: `${hitRatioPercentage.toFixed(1)}%`,
+      hitRatioPercentage: Math.round(hitRatioPercentage * 10) / 10,
+      memoryUsageEstimateBytes,
+      uptimeSeconds: Math.floor((Date.now() - this.startTime) / 1000),
+      defaultTTL: 120,
+      keys,
+    };
+  }
+
+  /**
+   * Reset telemetry counters
+   */
+  static resetMetrics(): void {
+    this.hits = 0;
+    this.misses = 0;
+    this.sets = 0;
+    this.deletes = 0;
+    this.startTime = Date.now();
   }
 
   /**
