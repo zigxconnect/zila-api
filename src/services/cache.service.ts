@@ -12,6 +12,15 @@ export interface CacheEntry<T> {
   sizeBytes: number;
 }
 
+export interface CacheKeyInfo {
+  key: string;
+  ttlRemainingSeconds: number;
+  expiresAt: string;
+  createdAt: string;
+  hits: number;
+  sizeBytes: number;
+}
+
 export class CacheService {
   private static store = new Map<string, CacheEntry<any>>();
   private static hits = 0;
@@ -65,6 +74,27 @@ export class CacheService {
   }
 
   /**
+   * Check if a valid (non-expired) cache key exists without triggering a hit count
+   */
+  static has(key: string): boolean {
+    const entry = this.store.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Return number of currently cached keys
+   */
+  static size(): number {
+    this.cleanExpired();
+    return this.store.size;
+  }
+
+  /**
    * Invalidate a specific cache key
    */
   static del(key: string): void {
@@ -80,6 +110,41 @@ export class CacheService {
         this.store.delete(key);
       }
     }
+  }
+
+  /**
+   * Clean expired keys
+   */
+  private static cleanExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.store.entries()) {
+      if (now > entry.expiresAt) {
+        this.store.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Retrieve active cache keys and metadata
+   */
+  static getKeys(): CacheKeyInfo[] {
+    this.cleanExpired();
+    const now = Date.now();
+    const list: CacheKeyInfo[] = [];
+
+    for (const [key, entry] of this.store.entries()) {
+      const ttlRemainingSeconds = Math.max(0, Math.round((entry.expiresAt - now) / 1000));
+      list.push({
+        key,
+        ttlRemainingSeconds,
+        expiresAt: new Date(entry.expiresAt).toISOString(),
+        createdAt: new Date(entry.createdAt).toISOString(),
+        hits: entry.hits,
+        sizeBytes: entry.sizeBytes,
+      });
+    }
+
+    return list;
   }
 
   /**
