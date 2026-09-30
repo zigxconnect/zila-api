@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { CohortService } from '../services/cohort.service';
+import { BleMeshService } from '../services/ble.mesh.service';
 
 const router = Router();
 
@@ -294,6 +295,8 @@ router.get('/:cohortId/chat-group', authMiddleware, async (req: AuthenticatedReq
     const userId = req.user.sub || req.user.id;
 
     const chatContext = await CohortService.getBluetoothChatContext(cohortId, userId);
+    //Allows The Bluetooth mesh to get access to the a chat group (room) 
+    BleMeshService.setRoomContext(chatContext.chatRoomId)
     return res.json({ chatContext });
   } catch (error: any) {
     console.error('Error fetching chat group context:', error);

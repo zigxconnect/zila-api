@@ -14,7 +14,7 @@ export interface BleChatMessage {
   type: "text" | "code" | "task_link" | "announcement";
   content: string;
   timestamp?: number;
-  signature?: string;
+  signature: string;
 }
 
 class BleMeshServices {
@@ -82,19 +82,19 @@ class BleMeshServices {
     if (!parsedMessage || parsedMessage.roomId !== this.currentRoomId) return;
 
     // Save to database
-    // await this.prisma.chatMessage.create({
-    //   data: {
-    //     id: parsedMessage.id,
-    //     roomId: parsedMessage.roomId,
-    //     senderId: parsedMessage.senderId,
-    //     senderName: parsedMessage.senderName,
-    //     role: parsedMessage.role,
-    //     isAdmin: parsedMessage.isAdmin,
-    //     type: parsedMessage.type,
-    //     content: parsedMessage.content,
-    //     timestamp: new Date(parsedMessage.timestamp),
-    //   },
-    // });
+    await this.prisma.chatMessage.create({
+      data: {
+        id: parsedMessage.id,
+        roomId: parsedMessage.roomId,
+        senderId: parsedMessage.senderId,
+        senderName: parsedMessage.senderName,
+        role: parsedMessage.role,
+        isAdmin: parsedMessage.isAdmin,
+        type: parsedMessage.type,
+        content: parsedMessage.content,
+        timestamp: new Date(parsedMessage.timestamp as number),
+      },
+    });
 
     // Relay if TTL still allows
     if (ttl > 1) {
@@ -103,13 +103,13 @@ class BleMeshServices {
   }
 
   public async transmitMessage(
-    msgPayload: Omit<BleChatMessage, "signature" | "timestamp">,
+    msgPayload: Omit<BleChatMessage, "id" | "timestamp">,
   ): Promise<void> {
     this.localSequenceCounter = (this.localSequenceCounter + 1) % 65535;
 
     const fullMessage: BleChatMessage = {
       ...msgPayload,
-      // id: crypto.randomUUID(),
+      id: crypto.randomUUID(),
       timestamp: Date.now(),  
     };
 
@@ -122,7 +122,7 @@ class BleMeshServices {
     header.writeUInt8(payload.length, 5); // Payload length
 
     // Mark as seen so we don't process our own message
-    await CacheService.set(
+    CacheService.set(
       `ble_mesh:\( {this.currentRoomId}: \){this.localSequenceCounter}`,
       true,
       600,

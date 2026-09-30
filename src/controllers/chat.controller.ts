@@ -62,19 +62,6 @@ export const createMessage = async (
         timestamp: new Date(),
       },
     });
-      const roleText = message.role === "student"? "student" : "supervisor"
-    const messagePayload: BleChatMessage = {
-        id: message.id,
-        roomId,
-        senderId: message.senderId,
-        senderName: message.senderName,
-        role: roleText,
-        isAdmin: message.isAdmin,
-        type,
-        content: message.content,
-      };
-    BleMeshService.transmitMessage(messagePayload)
-
     return res.status(201).json(message);
   } catch (error: any) {
     console.error("Error creating message:", error);
