@@ -1,7 +1,5 @@
 import readline from "readline";
-import { prisma } from '../src/config/prisma'
-import { CacheService } from "../src/services/cache.service"; // adjust path if needed
-import { BleMeshService } from "../src/services/ble.mesh.service"; // adjust path
+import { BleMeshService } from "../src/services/ble.mesh.service";
 
 
 // ========== CONFIG ==========
