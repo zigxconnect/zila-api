@@ -1,7 +1,7 @@
 import noble from "@abandonware/noble";
 import bleno from "@abandonware/bleno";
-import { PrismaClient } from "../generated/prisma";
-import { CacheService } from "./ble.mesh.service"; // adjust path if needed
+import { prisma } from "../config/prisma";
+import { CacheService } from "../services/cache.service";
 import crypto from "crypto";
 
 export interface BleChatMessage {
@@ -13,18 +13,18 @@ export interface BleChatMessage {
   isAdmin: boolean;
   type: "text" | "code" | "task_link" | "announcement";
   content: string;
-  timestamp: number;
+  timestamp?: number;
   signature?: string;
 }
 
-export class BleMeshService {
-  private prisma: PrismaClient;
+class BleMeshServices {
+  private prisma: typeof prisma;
   private cache: CacheService;
   private readonly SERVICE_UUID = "0000fe2600001000800000805f9b34fb";
   private currentRoomId: string | null = null;
   private localSequenceCounter = 0;
 
-  constructor(prismaInstance: PrismaClient, cacheInstance: CacheService) {
+  constructor(prismaInstance: typeof prisma, cacheInstance: CacheService) {
     this.prisma = prismaInstance;
     this.cache = cacheInstance;
     this.initializeMeshStack();
@@ -74,27 +74,27 @@ export class BleMeshService {
 
     // Deduplication
     const cacheKey = `ble_mesh:\( {this.currentRoomId}: \){sequenceId}`;
-    if (await this.cache.get(cacheKey)) return;
+    if (await CacheService.get(cacheKey)) return;
 
-    await this.cache.set(cacheKey, true, 600); // 10 minutes
+    CacheService.set(cacheKey, true, 600); // 10 minutes
 
     const parsedMessage = this.deserializePayload(buffer.subarray(6));
     if (!parsedMessage || parsedMessage.roomId !== this.currentRoomId) return;
 
     // Save to database
-    await this.prisma.chatMessage.create({
-      data: {
-        id: parsedMessage.id,
-        roomId: parsedMessage.roomId,
-        senderId: parsedMessage.senderId,
-        senderName: parsedMessage.senderName,
-        role: parsedMessage.role,
-        isAdmin: parsedMessage.isAdmin,
-        type: parsedMessage.type,
-        content: parsedMessage.content,
-        timestamp: new Date(parsedMessage.timestamp),
-      },
-    });
+    // await this.prisma.chatMessage.create({
+    //   data: {
+    //     id: parsedMessage.id,
+    //     roomId: parsedMessage.roomId,
+    //     senderId: parsedMessage.senderId,
+    //     senderName: parsedMessage.senderName,
+    //     role: parsedMessage.role,
+    //     isAdmin: parsedMessage.isAdmin,
+    //     type: parsedMessage.type,
+    //     content: parsedMessage.content,
+    //     timestamp: new Date(parsedMessage.timestamp),
+    //   },
+    // });
 
     // Relay if TTL still allows
     if (ttl > 1) {
@@ -103,14 +103,14 @@ export class BleMeshService {
   }
 
   public async transmitMessage(
-    msgPayload: Omit<BleChatMessage, "id" | "timestamp">,
+    msgPayload: Omit<BleChatMessage, "signature" | "timestamp">,
   ): Promise<void> {
     this.localSequenceCounter = (this.localSequenceCounter + 1) % 65535;
 
     const fullMessage: BleChatMessage = {
       ...msgPayload,
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
+      // id: crypto.randomUUID(),
+      timestamp: Date.now(),  
     };
 
     const header = Buffer.alloc(6);
@@ -122,7 +122,7 @@ export class BleMeshService {
     header.writeUInt8(payload.length, 5); // Payload length
 
     // Mark as seen so we don't process our own message
-    await this.cache.set(
+    await CacheService.set(
       `ble_mesh:\( {this.currentRoomId}: \){this.localSequenceCounter}`,
       true,
       600,
@@ -171,3 +171,5 @@ export class BleMeshService {
     }
   }
 }
+
+export const BleMeshService = new BleMeshServices(prisma, new CacheService)

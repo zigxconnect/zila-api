@@ -42,6 +42,8 @@ import gamificationRoutes from './routes/gamification.routes';
 import githubRoutes from './routes/github.routes';
 import scoresRoutes from './routes/scores.routes';
 import documentsRoutes from './routes/documents.routes';
+import chatRoutes from './routes/bluetooth.chat.routes';
+
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -58,6 +60,7 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/github', githubRoutes);
 app.use('/api/scores', scoresRoutes);
 app.use('/api/documents', documentsRoutes);
+app.use("/api/chat", chatRoutes);
 // Error Handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error(err.stack);
