@@ -29,6 +29,14 @@ test('SubmissionQuotaService - Enforces 1 PR recommended, max 2 PRs daily', () =
   const q3 = SubmissionQuotaService.evaluateQuota(3);
   assert.equal(q3.allowed, false);
   assert.equal(q3.remainingToday, 0);
+
+  // Helper methods
+  assert.equal(SubmissionQuotaService.isWithinDailyLimit(0), true);
+  assert.equal(SubmissionQuotaService.isWithinDailyLimit(1), true);
+  assert.equal(SubmissionQuotaService.isWithinDailyLimit(2), false);
+  assert.equal(SubmissionQuotaService.getQuotaRemaining(0), 2);
+  assert.equal(SubmissionQuotaService.getQuotaRemaining(1), 1);
+  assert.equal(SubmissionQuotaService.getQuotaRemaining(2), 0);
 });
 
 test('ScoringNormalizationService - Day weights normalized over 100', () => {
@@ -69,4 +77,10 @@ test('ScoringNormalizationService - Day weights normalized over 100', () => {
   assert.equal(ScoringNormalizationService.normalizeDayScore(1, 100), 12.5);
   // 80% on Day 3 contributes 80 * 0.25 = 20 points
   assert.equal(ScoringNormalizationService.normalizeDayScore(3, 80), 20.0);
+
+  // getDayNormalizedShare helper
+  assert.equal(ScoringNormalizationService.getDayNormalizedShare(1), 12.5);
+  assert.equal(ScoringNormalizationService.getDayNormalizedShare(2), 12.5);
+  assert.equal(ScoringNormalizationService.getDayNormalizedShare(3), 25.0);
+  assert.equal(ScoringNormalizationService.getDayNormalizedShare(4), 50.0);
 });
