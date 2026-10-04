@@ -40,9 +40,15 @@ router.get('/repos', authMiddleware, async (req: AuthenticatedRequest, res: Resp
  * /api/github/active:
  *   get:
  *     summary: Get GitHub repo and materials for the student's active cohort (for zila downloads)
+ *     description: Returns primary repo URL and sample ML repo fallback (https://github.com/iws3/sample_repo_zila.git).
  *     tags: [GitHub]
  *     security:
  *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Active cohort repository metadata
+ *       404:
+ *         description: No active cohort found
  */
 router.get('/active', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
