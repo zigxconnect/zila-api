@@ -60,4 +60,11 @@ export class ScoringNormalizationService {
     const raw = this.DAY_WEIGHTS[day] ?? 1;
     return Math.round((raw / this.TOTAL_RAW_WEIGHT) * 100 * 10) / 10;
   }
+
+  /**
+   * Validates if a given day number is within curriculum sprint bounds (1 to 4)
+   */
+  static validateDayNumber(day: number): boolean {
+    return Number.isInteger(day) && day >= 1 && day <= 4;
+  }
 }
