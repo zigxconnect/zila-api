@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import { supabase } from '../config/supabase';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
+import { SubmissionQuotaService } from '../services/submission-quota.service';
+import { ScoringNormalizationService } from '../services/scoring-normalization.service';
 
 const router = Router();
 
@@ -74,6 +76,206 @@ router.get('/my-tasks', authMiddleware, async (req: AuthenticatedRequest, res: R
   } catch (error: any) {
     console.error('Error fetching tasks:', error);
     return res.status(500).json({ error: 'Failed to fetch tasks' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/tasks/quota:
+ *   get:
+ *     summary: Get daily PR submission quota status for the student
+ *     description: Returns remaining PR quota for today. Cohort rule allows 1 PR/day recommended, maximum 2 PRs per calendar day.
+ *     tags: [Tasks]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current daily PR submission quota
+ */
+router.get('/quota', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user.sub || req.user.id;
+    const enrollments = await prisma.cohortStudent.findMany({
+      where: { studentId: userId, status: 'active' },
+      select: { id: true }
+    });
+
+    if (enrollments.length === 0) {
+      return res.json({
+        quota: SubmissionQuotaService.evaluateQuota(0)
+      });
+    }
+
+    const startOfDay = SubmissionQuotaService.getStartOfDayUTC();
+    const countToday = await prisma.taskSubmission.count({
+      where: {
+        studentId: { in: enrollments.map(e => e.id) },
+        submittedAt: { gte: startOfDay }
+      }
+    });
+
+    return res.json({
+      quota: SubmissionQuotaService.evaluateQuota(countToday)
+    });
+  } catch (error: any) {
+    console.error('Error checking PR quota:', error);
+    return res.status(500).json({ error: 'Failed to evaluate PR quota' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/tasks/scoring-rubric:
+ *   get:
+ *     summary: Retrieve day-based scoring weights normalized to 100%
+ *     description: Returns rubric for exercise days (Day 1: 1pt, Day 2: 1pt, Day 3: 2pts, Day 4: 4pts) normalized over 100%.
+ *     tags: [Tasks]
+ *     responses:
+ *       200:
+ *         description: Normalized scoring rubric
+ */
+router.get('/scoring-rubric', (req, res) => {
+  return res.json({
+    rubric: ScoringNormalizationService.getRubric(),
+    totalRawWeight: ScoringNormalizationService.TOTAL_RAW_WEIGHT,
+    normalizedScale: 100
+  });
+});
+
+/**
+ * @swagger
+ * /api/tasks/auto-submit:
+ *   post:
+ *     summary: Automated background PR submission for cohort exercises
+ *     description: Submits a cohort task solution directly from lil-zila's automated background PR pipeline.
+ *     tags: [Tasks]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user.sub || req.user.id;
+    const {
+      cohortId,
+      level = 'beginner',
+      module = '1_python',
+      day = 1,
+      githubPrUrl,
+      githubRepoUrl,
+      githubBranch,
+      commitHash,
+      summary,
+      challenges,
+      deploymentUrl
+    } = req.body;
+
+    if (!githubPrUrl) {
+      return res.status(400).json({ error: 'GitHub PR URL is required for task submission' });
+    }
+
+    // Resolve active student enrollment
+    const enrollment = await prisma.cohortStudent.findFirst({
+      where: {
+        studentId: userId,
+        status: 'active',
+        ...(cohortId && { cohortId })
+      },
+      include: { cohort: true }
+    });
+
+    if (!enrollment) {
+      return res.status(403).json({ error: 'You are not enrolled in an active cohort' });
+    }
+
+    // Check daily PR quota
+    const startOfDay = SubmissionQuotaService.getStartOfDayUTC();
+    const countToday = await prisma.taskSubmission.count({
+      where: {
+        studentId: enrollment.id,
+        submittedAt: { gte: startOfDay }
+      }
+    });
+
+    const quota = SubmissionQuotaService.evaluateQuota(countToday);
+    if (!quota.allowed) {
+      return res.status(429).json({ error: quota.message, quota });
+    }
+
+    // Resolve or find task for this module and day
+    const dayNumber = Number(day) || 1;
+    const taskTitle = `${module} - Day 0${dayNumber}`;
+    let task = await prisma.task.findFirst({
+      where: {
+        cohortId: enrollment.cohortId,
+        title: { contains: taskTitle }
+      }
+    });
+
+    if (!task) {
+      // Auto-create task if not already created for this cohort curriculum
+      task = await prisma.task.create({
+        data: {
+          cohortId: enrollment.cohortId,
+          title: `Exercise: ${taskTitle}`,
+          description: `Daily curriculum exercise for ${level}/${module}/Day ${dayNumber}`,
+          type: 'assignment',
+          difficulty: level || 'beginner',
+          skills: [module],
+          maxPoints: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25,
+          githubRequired: true,
+          prRequired: true,
+          assignedBy: enrollment.cohort.supervisorId || userId,
+          assignedByName: enrollment.cohort.supervisorName || 'Cohort Supervisor',
+          assignedByEmail: enrollment.cohort.supervisorEmail || 'supervisor@zigex.com'
+        }
+      });
+    }
+
+    // Create submission record
+    const submissionContent = [
+      `### Exercise Summary\n${summary || 'Automated exercise submission.'}`,
+      challenges ? `### Challenges & Roadblocks\n${challenges}` : null,
+      deploymentUrl ? `### Deployment URL\n${deploymentUrl}` : null,
+      `### GitHub Metadata\n- PR: ${githubPrUrl}\n- Branch: ${githubBranch || 'automated'}\n- Commit: ${commitHash || 'latest'}`
+    ].filter(Boolean).join('\n\n');
+
+    const submission = await prisma.taskSubmission.create({
+      data: {
+        taskId: task.id,
+        studentId: enrollment.id,
+        title: `Day 0${dayNumber} Exercise Submission: ${module}`,
+        description: summary || `PR created on ${githubBranch || 'branch'}`,
+        content: submissionContent,
+        githubRepoUrl: githubRepoUrl || 'https://github.com/iws3/sample_repo_zila.git',
+        githubPrUrl,
+        githubBranch,
+        commitHash,
+        status: 'submitted',
+        submittedAt: new Date()
+      }
+    });
+
+    // Award initial completion points
+    await prisma.gamificationPoint.create({
+      data: {
+        studentId: enrollment.id,
+        pointType: 'task_completion',
+        points: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25,
+        reason: `Completed exercise PR for ${module} Day 0${dayNumber}`,
+        relatedTaskId: task.id
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Automated PR task submitted successfully',
+      submission,
+      quota: SubmissionQuotaService.evaluateQuota(countToday + 1),
+      normalizedWeight: ScoringNormalizationService.getRubric().find(r => r.day === dayNumber)
+    });
+  } catch (error: any) {
+    console.error('Error in auto-submit task:', error);
+    return res.status(500).json({ error: error.message || 'Failed to submit automated task' });
   }
 });
 
@@ -248,6 +450,20 @@ router.post('/:taskId/submit', authMiddleware, async (req: AuthenticatedRequest,
 
     if (task.prRequired && !githubPrUrl) {
       return res.status(400).json({ error: 'Pull request URL is required for this task' });
+    }
+
+    // Check daily PR submission quota
+    const startOfDay = SubmissionQuotaService.getStartOfDayUTC();
+    const countToday = await prisma.taskSubmission.count({
+      where: {
+        studentId: enrollment.id,
+        submittedAt: { gte: startOfDay }
+      }
+    });
+
+    const quota = SubmissionQuotaService.evaluateQuota(countToday);
+    if (!quota.allowed) {
+      return res.status(429).json({ error: quota.message, quota });
     }
 
     // Check if already submitted
