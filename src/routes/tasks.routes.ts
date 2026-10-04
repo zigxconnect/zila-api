@@ -201,9 +201,10 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       return res.status(429).json({ error: quota.message, quota });
     }
 
-    // Resolve or find task for this module and day
-    const dayNumber = Number(day) || 1;
-    const taskTitle = `${module} - Day 0${dayNumber}`;
+    // Sanitize module and clamp day between 1 and 4
+    const cleanModule = String(module || '1_python').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dayNumber = Math.max(1, Math.min(4, Number(day) || 1));
+    const taskTitle = `${cleanModule} - Day 0${dayNumber}`;
     let task = await prisma.task.findFirst({
       where: {
         cohortId: enrollment.cohortId,
