@@ -151,6 +151,21 @@ router.get('/scoring-rubric', (req, res) => {
  *     tags: [Tasks]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AutoSubmitTaskRequest'
+ *     responses:
+ *       201:
+ *         description: Task submitted successfully with automated PR metadata
+ *       400:
+ *         description: Missing required GitHub PR URL
+ *       403:
+ *         description: Not enrolled in an active cohort
+ *       429:
+ *         description: Daily PR submission quota reached (max 2 PRs per calendar day)
  */
 router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
