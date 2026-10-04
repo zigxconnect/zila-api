@@ -52,4 +52,12 @@ export class ScoringNormalizationService {
     const normalizedContribution = (Math.max(0, Math.min(100, tutorScore)) * dayWeightRatio);
     return Math.round(normalizedContribution * 10) / 10;
   }
+
+  /**
+   * Returns the normalized percentage weight for a specific curriculum day
+   */
+  static getDayNormalizedShare(day: number): number {
+    const raw = this.DAY_WEIGHTS[day] ?? 1;
+    return Math.round((raw / this.TOTAL_RAW_WEIGHT) * 100 * 10) / 10;
+  }
 }
