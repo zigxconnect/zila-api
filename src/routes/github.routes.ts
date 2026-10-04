@@ -67,10 +67,13 @@ router.get('/active', authMiddleware, async (req: AuthenticatedRequest, res: Res
       orderBy: { createdAt: 'desc' },
     });
 
-    // Also check if cohort itself has githubRepoUrl
+    // Also check if cohort itself has githubRepoUrl, or fallback to the sample ML repository
     let primaryUrl = activeCohort.githubRepoUrl;
     if (!primaryUrl && repos.length > 0) {
       primaryUrl = repos[0].url;
+    }
+    if (!primaryUrl) {
+      primaryUrl = 'https://github.com/iws3/sample_repo_zila.git';
     }
 
     return res.json({
@@ -79,7 +82,8 @@ router.get('/active', authMiddleware, async (req: AuthenticatedRequest, res: Res
         name: activeCohort.name,
         department: activeCohort.department,
       },
-      primaryRepoUrl: primaryUrl || null,
+      primaryRepoUrl: primaryUrl,
+      sampleRepoUrl: 'https://github.com/iws3/sample_repo_zila.git',
       repos,
     });
   } catch (error: any) {
