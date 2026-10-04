@@ -83,4 +83,11 @@ test('ScoringNormalizationService - Day weights normalized over 100', () => {
   assert.equal(ScoringNormalizationService.getDayNormalizedShare(2), 12.5);
   assert.equal(ScoringNormalizationService.getDayNormalizedShare(3), 25.0);
   assert.equal(ScoringNormalizationService.getDayNormalizedShare(4), 50.0);
+
+  // validateDayNumber
+  assert.equal(ScoringNormalizationService.validateDayNumber(1), true);
+  assert.equal(ScoringNormalizationService.validateDayNumber(4), true);
+  assert.equal(ScoringNormalizationService.validateDayNumber(0), false);
+  assert.equal(ScoringNormalizationService.validateDayNumber(5), false);
+  assert.equal(ScoringNormalizationService.validateDayNumber(1.5), false);
 });
