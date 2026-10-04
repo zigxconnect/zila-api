@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middle
 import { prisma } from '../config/prisma';
 import { SubmissionQuotaService } from '../services/submission-quota.service';
 import { ScoringNormalizationService } from '../services/scoring-normalization.service';
+import { CurriculumService } from '../services/curriculum.service';
 
 const router = Router();
 
@@ -144,10 +145,28 @@ router.get('/scoring-rubric', (req, res) => {
 
 /**
  * @swagger
+ * /api/tasks/curriculum:
+ *   get:
+ *     summary: Retrieve multi-domain curriculum tracks (ML, Web, Cyber, Embedded, App, Cloud)
+ *     description: Returns dynamic list of curriculum domains, descriptions, and tiered module blueprints.
+ *     tags: [Tasks]
+ *     responses:
+ *       200:
+ *         description: All available curriculum tracks and domains
+ */
+router.get('/curriculum', (req, res) => {
+  return res.json({
+    domains: CurriculumService.getAllDomains(),
+    totalDomains: CurriculumService.getAllDomains().length,
+  });
+});
+
+/**
+ * @swagger
  * /api/tasks/auto-submit:
  *   post:
- *     summary: Automated background PR submission for cohort exercises
- *     description: Submits a cohort task solution directly from lil-zila's automated background PR pipeline.
+ *     summary: Automated background PR submission for cohort exercises across any domain
+ *     description: Submits a cohort task solution directly from lil-zila's automated background PR pipeline supporting ML, Web, Cyber, Embedded, App, Cloud, or custom domains.
  *     tags: [Tasks]
  *     security:
  *       - bearerAuth: []
@@ -172,6 +191,7 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
     const userId = req.user.sub || req.user.id;
     const {
       cohortId,
+      domain = 'ml',
       level = 'beginner',
       module = '1_python',
       day = 1,
@@ -216,10 +236,11 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       return res.status(429).json({ error: quota.message, quota });
     }
 
-    // Sanitize module and clamp day between 1 and 4
-    const cleanModule = String(module || '1_python').replace(/[^a-zA-Z0-9_-]/g, '_');
+    // Sanitize domain, module and clamp day between 1 and 4
+    const cleanDomain = CurriculumService.sanitizePathComponent(domain || 'ml');
+    const cleanModule = CurriculumService.sanitizePathComponent(module || '1_python');
     const dayNumber = Math.max(1, Math.min(4, Number(day) || 1));
-    const taskTitle = `${cleanModule} - Day 0${dayNumber}`;
+    const taskTitle = `[${cleanDomain.toUpperCase()}] ${cleanModule} - Day 0${dayNumber}`;
     let task = await prisma.task.findFirst({
       where: {
         cohortId: enrollment.cohortId,
@@ -233,10 +254,10 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
         data: {
           cohortId: enrollment.cohortId,
           title: `Exercise: ${taskTitle}`,
-          description: `Daily curriculum exercise for ${level}/${module}/Day ${dayNumber}`,
+          description: `Daily curriculum exercise for ${cleanDomain}/${level}/${cleanModule}/Day ${dayNumber}`,
           type: 'assignment',
           difficulty: level || 'beginner',
-          skills: [module],
+          skills: [cleanDomain, cleanModule],
           maxPoints: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25,
           githubRequired: true,
           prRequired: true,
