@@ -48,4 +48,18 @@ export class SubmissionQuotaService {
       message,
     };
   }
+
+  /**
+   * Helper check returning true if current submission count is below daily threshold
+   */
+  static isWithinDailyLimit(submissionsToday: number): boolean {
+    return submissionsToday < this.MAX_DAILY_PRS;
+  }
+
+  /**
+   * Helper returning remaining PR quota
+   */
+  static getQuotaRemaining(submissionsToday: number): number {
+    return Math.max(0, this.MAX_DAILY_PRS - submissionsToday);
+  }
 }
