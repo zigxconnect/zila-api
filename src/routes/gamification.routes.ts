@@ -100,6 +100,10 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
       },
       include: {
         gamificationPoints: true,
+        tasksSubmitted: {
+          orderBy: { submittedAt: 'desc' },
+          take: 1
+        },
         weeklyScores: {
           orderBy: { weekNumber: 'desc' },
           take: 1
@@ -107,15 +111,31 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
       }
     });
 
-    // Calculate leaderboard
-    const leaderboard = students.map(student => ({
-      studentId: student.studentId,
-      studentName: student.studentName,
-      studentEmail: student.studentEmail,
-      totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
-      latestScore: student.weeklyScores[0]?.overallScore || 0,
-      rank: 0
-    }))
+    // Calculate leaderboard with STATUS column
+    const leaderboard = students.map(student => {
+      const latestSub = student.tasksSubmitted[0];
+      let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
+      if (latestSub) {
+        if (latestSub.status === 'approved' || latestSub.status === 'accepted') {
+          prStatus = 'accepted';
+        } else if (latestSub.status === 'rejected') {
+          prStatus = 'rejected';
+        } else {
+          prStatus = 'pending';
+        }
+      }
+
+      return {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        studentEmail: student.studentEmail,
+        totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
+        latestScore: student.weeklyScores[0]?.overallScore || 0,
+        status: prStatus,
+        latestPrUrl: latestSub?.githubPrUrl || null,
+        rank: 0
+      };
+    })
     .sort((a, b) => b.totalPoints - a.totalPoints)
     .slice(0, parseInt(limit as string))
     .map((entry, index) => ({
