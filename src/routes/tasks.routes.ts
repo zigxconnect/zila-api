@@ -293,27 +293,8 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       }
     });
 
-    // Note: Gamification marks (1 mark per Day 1/2, 2 marks for Day 3, 4 marks for Day 4)
-    // are awarded when the pull request is merged into the cohort repository.
-
-    // Send email confirmation using OTP email tech (Resend)
-    const studentUser = await prisma.cohortStudent.findUnique({
-      where: { id: enrollment.id }
-    });
-    const targetEmail = studentUser?.studentEmail || req.user.email;
-    const studentDisplayName = studentUser?.studentName || 'Student';
-
-    if (targetEmail) {
-      await sendTaskSubmissionEmail(targetEmail, studentDisplayName, {
-        prUrl: githubPrUrl,
-        branch: githubBranch || 'automated',
-        module: cleanModule,
-        day: dayNumber,
-        domain: cleanDomain,
-        status: 'pending',
-        pointsAwarded: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25
-      }).catch(err => console.warn('Non-fatal email dispatch error:', err));
-    }
+    // Note: Gamification marks and email notification are ONLY triggered
+    // when the pull request is reviewed and merged by supervisors on GitHub.
 
     return res.status(201).json({
       success: true,

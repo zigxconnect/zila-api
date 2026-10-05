@@ -73,7 +73,11 @@ export const sendTaskSubmissionEmail = async (
           </div>
           <p style="font-size: 16px; color: #1e293b;">Hello <strong>${studentName}</strong>,</p>
           <p style="font-size: 15px; color: #334155; line-height: 1.6;">
-            Your daily exercise submission has been registered and dispatched on GitHub.
+            ${isAccepted
+              ? 'Great work! Your pull request has been reviewed and successfully merged into the cohort repository by your supervisor. Your points have been updated on the leaderboard.'
+              : isRejected
+              ? 'Your pull request was closed without merge by your supervisor. Please review the feedback and submit an updated PR.'
+              : 'Your daily exercise submission has been registered and dispatched on GitHub.'}
           </p>
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
             <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
@@ -95,8 +99,8 @@ export const sendTaskSubmissionEmail = async (
               </tr>
               ${details.pointsAwarded !== undefined ? `
               <tr>
-                <td style="padding: 6px 0; color: #64748b;">Points Awarded:</td>
-                <td style="padding: 6px 0; font-weight: bold; color: #10b981;">+${details.pointsAwarded} pts</td>
+                <td style="padding: 6px 0; color: #64748b;">Marks Awarded:</td>
+                <td style="padding: 6px 0; font-weight: bold; color: #10b981;">+${details.pointsAwarded} mark${details.pointsAwarded === 1 ? '' : 's'}</td>
               </tr>
               ` : ''}
             </table>
