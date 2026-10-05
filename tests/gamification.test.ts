@@ -15,10 +15,18 @@ test('Gamification - Points Calculation and Leaderboard Ranking', async (t) => {
   assert.equal(sortedLeaderboard[2].studentName, 'John');
 });
 
-test('Gamification - Badge Unlock Logic', async (t) => {
-  const evaluateBadgeUnlock = (points: number, required: number) => points >= required;
+test('Gamification - Leaderboard PR Status Column Calculation', async (t) => {
+  const calculatePrStatus = (submission?: { status: string }) => {
+    if (!submission) return 'none';
+    if (submission.status === 'approved' || submission.status === 'accepted') return 'accepted';
+    if (submission.status === 'rejected') return 'rejected';
+    return 'pending';
+  };
 
-  assert.equal(evaluateBadgeUnlock(150, 100), true);
-  assert.equal(evaluateBadgeUnlock(80, 100), false);
-  assert.equal(evaluateBadgeUnlock(100, 100), true);
+  assert.equal(calculatePrStatus(undefined), 'none');
+  assert.equal(calculatePrStatus({ status: 'submitted' }), 'pending');
+  assert.equal(calculatePrStatus({ status: 'under_review' }), 'pending');
+  assert.equal(calculatePrStatus({ status: 'approved' }), 'accepted');
+  assert.equal(calculatePrStatus({ status: 'accepted' }), 'accepted');
+  assert.equal(calculatePrStatus({ status: 'rejected' }), 'rejected');
 });
