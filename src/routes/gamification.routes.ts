@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { prisma } from '../config/prisma';
+import { prisma, withDbRetry } from '../config/prisma';
+import { GitHubPrSyncService } from '../services/github-sync.service';
+import { CacheService } from '../services/cache.service';
 
 const router = Router();
 
@@ -109,61 +111,83 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
   try {
     const { cohortId } = req.params;
     const { limit = '10' } = req.query;
+    const cacheKey = `leaderboard:${cohortId}:${limit}`;
 
-    const students = await prisma.cohortStudent.findMany({
-      where: {
-        cohortId,
-        status: 'active'
-      },
-      include: {
-        gamificationPoints: true,
-        tasksSubmitted: {
-          orderBy: { submittedAt: 'desc' },
-          take: 1
+    // Background sync of any pending GitHub PRs for this cohort
+    GitHubPrSyncService.syncPendingSubmissions(cohortId).catch((err) =>
+      console.warn('[Leaderboard] Background PR sync warning:', err.message)
+    );
+
+    const cached = CacheService.get<any>(cacheKey);
+    if (cached) {
+      return res.json({ leaderboard: cached });
+    }
+
+    const students = await withDbRetry(() =>
+      prisma.cohortStudent.findMany({
+        where: {
+          cohortId,
+          status: 'active',
         },
-        weeklyScores: {
-          orderBy: { weekNumber: 'desc' },
-          take: 1
-        }
-      }
-    });
+        include: {
+          gamificationPoints: true,
+          tasksSubmitted: {
+            orderBy: { submittedAt: 'desc' },
+            take: 1,
+          },
+          weeklyScores: {
+            orderBy: { weekNumber: 'desc' },
+            take: 1,
+          },
+        },
+      })
+    );
 
     // Calculate leaderboard with STATUS column
-    const leaderboard = students.map(student => {
-      const latestSub = student.tasksSubmitted[0];
-      let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
-      if (latestSub) {
-        if (latestSub.status === 'approved' || latestSub.status === 'accepted') {
-          prStatus = 'accepted';
-        } else if (latestSub.status === 'rejected') {
-          prStatus = 'rejected';
-        } else {
-          prStatus = 'pending';
+    const leaderboard = students
+      .map((student) => {
+        const latestSub = student.tasksSubmitted[0];
+        let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
+        if (latestSub) {
+          if (latestSub.status === 'approved' || latestSub.status === 'accepted') {
+            prStatus = 'accepted';
+          } else if (latestSub.status === 'rejected') {
+            prStatus = 'rejected';
+          } else {
+            prStatus = 'pending';
+          }
         }
-      }
 
-      return {
-        studentId: student.studentId,
-        studentName: student.studentName,
-        studentEmail: student.studentEmail,
-        totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
-        latestScore: student.weeklyScores[0]?.overallScore || 0,
-        status: prStatus,
-        latestPrUrl: latestSub?.githubPrUrl || null,
-        rank: 0
-      };
-    })
-    .sort((a, b) => b.totalPoints - a.totalPoints)
-    .slice(0, parseInt(limit as string))
-    .map((entry, index) => ({
-      ...entry,
-      rank: index + 1
-    }));
+        return {
+          studentId: student.studentId,
+          studentName: student.studentName,
+          studentEmail: student.studentEmail,
+          totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
+          latestScore: student.weeklyScores[0]?.overallScore || 0,
+          status: prStatus,
+          latestPrUrl: latestSub?.githubPrUrl || null,
+          rank: 0,
+        };
+      })
+      .sort((a, b) => b.totalPoints - a.totalPoints)
+      .slice(0, parseInt(limit as string))
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1,
+      }));
 
+    CacheService.set(cacheKey, leaderboard, 45); // 45s fast cache
     return res.json({ leaderboard });
   } catch (error: any) {
     console.error('Error fetching leaderboard:', error);
-    return res.status(500).json({ error: 'Failed to fetch leaderboard' });
+    // If database timed out but we have a cache or want to return graceful fallback
+    const { cohortId } = req.params;
+    const { limit = '10' } = req.query;
+    const fallback = CacheService.get<any>(`leaderboard:${cohortId}:${limit}`);
+    if (fallback) {
+      return res.json({ leaderboard: fallback });
+    }
+    return res.status(500).json({ error: error.message || 'Failed to fetch leaderboard' });
   }
 });
 
