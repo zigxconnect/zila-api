@@ -3,6 +3,8 @@ import { supabase } from '../config/supabase';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
 import { CohortService } from '../services/cohort.service';
+import { sendTaskSubmissionEmail } from '../services/email.service';
+import { GitHubPrSyncService } from '../services/github-sync.service';
 
 const router = Router();
 
@@ -191,6 +193,127 @@ router.delete('/repos/:id', authMiddleware, async (req: AuthenticatedRequest, re
   } catch (error: any) {
     console.error('Error deleting repo:', error);
     return res.status(500).json({ error: 'Failed to delete repository' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/github/webhook:
+ *   post:
+ *     summary: GitHub Webhook handler for PR merge and closure events
+ *     description: Automatically detects when an intern's pull request is merged on GitHub, updates task submission status to approved, increments points, and sends confirmation email.
+ *     tags: [GitHub]
+ */
+router.post('/webhook', async (req, res) => {
+  try {
+    const event = req.headers['x-github-event'];
+    const body = req.body;
+
+    if (event === 'pull_request') {
+      const action = body.action;
+      const pr = body.pull_request;
+      if (pr) {
+        const prUrl = pr.html_url;
+        const isMerged = Boolean(pr.merged || pr.merged_at);
+        const isClosed = action === 'closed' || pr.state === 'closed';
+
+        // Find task submission matching this PR URL
+        const submission = await prisma.taskSubmission.findFirst({
+          where: {
+            OR: [
+              { githubPrUrl: prUrl },
+              { githubPrUrl: { contains: `/pull/${pr.number}` } },
+            ],
+          },
+          include: {
+            task: true,
+            student: true,
+          },
+        });
+
+        if (submission && submission.status === 'submitted') {
+          if (isMerged) {
+            const pointsToAward = submission.task.maxPoints || 25;
+            await prisma.taskSubmission.update({
+              where: { id: submission.id },
+              data: {
+                status: 'approved',
+                pointsEarned: pointsToAward,
+                feedback: 'Pull request successfully merged into cohort repository.',
+                reviewedAt: new Date(pr.merged_at || Date.now()),
+              },
+            });
+
+            await prisma.gamificationPoint.create({
+              data: {
+                studentId: submission.studentId,
+                pointType: 'task_completion',
+                points: pointsToAward,
+                reason: `PR merged for "${submission.task.title}"`,
+                relatedTaskId: submission.taskId,
+              },
+            });
+
+            if (submission.student?.studentEmail) {
+              await sendTaskSubmissionEmail(submission.student.studentEmail, submission.student.studentName || 'Student', {
+                prUrl,
+                branch: submission.githubBranch || 'main',
+                module: submission.task.title,
+                day: 1,
+                domain: 'Cohort Task',
+                status: 'accepted',
+                pointsAwarded: pointsToAward,
+              }).catch(() => {});
+            }
+          } else if (isClosed && !isMerged) {
+            await prisma.taskSubmission.update({
+              where: { id: submission.id },
+              data: {
+                status: 'rejected',
+                feedback: 'Pull request closed without merge.',
+                reviewedAt: new Date(pr.closed_at || Date.now()),
+              },
+            });
+
+            if (submission.student?.studentEmail) {
+              await sendTaskSubmissionEmail(submission.student.studentEmail, submission.student.studentName || 'Student', {
+                prUrl,
+                branch: submission.githubBranch || 'main',
+                module: submission.task.title,
+                day: 1,
+                domain: 'Cohort Task',
+                status: 'rejected',
+              }).catch(() => {});
+            }
+          }
+        }
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err: any) {
+    console.warn('[GitHub Webhook] Error:', err.message);
+    return res.status(500).json({ error: 'Webhook processing error' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/github/sync-pr:
+ *   post:
+ *     summary: Synchronize and check PR status from GitHub REST API
+ *     description: Checks open pull requests on GitHub, detects if merged or closed, updates DB, awards points, and sends emails.
+ *     tags: [GitHub]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/sync-pr', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { cohortId } = req.body;
+    const syncedCount = await GitHubPrSyncService.syncPendingSubmissions(cohortId);
+    return res.json({ success: true, message: `Synced ${syncedCount} PR submissions from GitHub`, syncedCount });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to sync PRs' });
   }
 });
 
