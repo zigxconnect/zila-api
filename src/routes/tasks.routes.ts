@@ -647,7 +647,19 @@ router.get('/:taskId/submissions', authMiddleware, async (req: AuthenticatedRequ
  * @swagger
  * /api/tasks/submissions/{submissionId}/review:
  *   post:
- *     summary: Review and grade a submission (Supervisor only)
+ *     summary: Review and grade a task submission (Supervisor only)
+ *     description: Approves or rejects an exercise PR submission, awards points to the intern, updates cohort leaderboard rank, and triggers email notification via Resend.
+ *     tags: [Tasks]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: submissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *   patch:
+ *     summary: Update review status and points for a task submission (Supervisor only)
  *     tags: [Tasks]
  *     security:
  *       - bearerAuth: []
