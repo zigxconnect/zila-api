@@ -139,7 +139,7 @@ export class GitHubPrSyncService {
 
         if (!ghState) continue;
 
-        const pointsToAward = sub.task.maxPoints || 25;
+        const pointsToAward = sub.task.maxPoints && sub.task.maxPoints <= 4 ? sub.task.maxPoints : 1;
 
         if (ghState.merged) {
           // Duplicate guard — prevents double-awarding merge bonus

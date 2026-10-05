@@ -233,7 +233,7 @@ router.post('/webhook', async (req, res) => {
 
         if (submission && submission.status === 'submitted') {
           if (isMerged) {
-            const pointsToAward = submission.task.maxPoints || 25;
+            const pointsToAward = submission.task.maxPoints && submission.task.maxPoints <= 4 ? submission.task.maxPoints : 1;
             await prisma.taskSubmission.update({
               where: { id: submission.id },
               data: {

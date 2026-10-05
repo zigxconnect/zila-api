@@ -259,7 +259,7 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
           type: 'assignment',
           difficulty: level || 'beginner',
           skills: [cleanDomain, cleanModule],
-          maxPoints: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25,
+          maxPoints: ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1,
           githubRequired: true,
           prRequired: true,
           assignedBy: enrollment.cohort.supervisorId || userId,
@@ -293,16 +293,8 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       }
     });
 
-    // Award initial completion points
-    await prisma.gamificationPoint.create({
-      data: {
-        studentId: enrollment.id,
-        pointType: 'task_completion',
-        points: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25,
-        reason: `Completed exercise PR for ${module} Day 0${dayNumber}`,
-        relatedTaskId: task.id
-      }
-    });
+    // Note: Gamification marks (1 mark per Day 1/2, 2 marks for Day 3, 4 marks for Day 4)
+    // are awarded when the pull request is merged into the cohort repository.
 
     // Send email confirmation using OTP email tech (Resend)
     const studentUser = await prisma.cohortStudent.findUnique({
