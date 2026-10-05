@@ -5,6 +5,7 @@ import { prisma } from '../config/prisma';
 import { SubmissionQuotaService } from '../services/submission-quota.service';
 import { ScoringNormalizationService } from '../services/scoring-normalization.service';
 import { CurriculumService } from '../services/curriculum.service';
+import { sendTaskSubmissionEmail } from '../services/email.service';
 
 const router = Router();
 
@@ -302,6 +303,25 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
         relatedTaskId: task.id
       }
     });
+
+    // Send email confirmation using OTP email tech (Resend)
+    const studentUser = await prisma.cohortStudent.findUnique({
+      where: { id: enrollment.id }
+    });
+    const targetEmail = studentUser?.studentEmail || req.user.email;
+    const studentDisplayName = studentUser?.studentName || 'Student';
+
+    if (targetEmail) {
+      await sendTaskSubmissionEmail(targetEmail, studentDisplayName, {
+        prUrl: githubPrUrl,
+        branch: githubBranch || 'automated',
+        module: cleanModule,
+        day: dayNumber,
+        domain: cleanDomain,
+        status: 'pending',
+        pointsAwarded: (ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1) * 25
+      }).catch(err => console.warn('Non-fatal email dispatch error:', err));
+    }
 
     return res.status(201).json({
       success: true,
@@ -632,7 +652,7 @@ router.get('/:taskId/submissions', authMiddleware, async (req: AuthenticatedRequ
  *     security:
  *       - bearerAuth: []
  */
-router.post('/submissions/:submissionId/review', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+const reviewHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { submissionId } = req.params;
     const userId = req.user.sub || req.user.id;
@@ -688,6 +708,25 @@ router.post('/submissions/:submissionId/review', authMiddleware, async (req: Aut
       });
     }
 
+    // Send email notification to intern on review decision
+    if (submission.student?.studentEmail) {
+      const isApproved = status === 'approved' || status === 'accepted';
+      const isRejected = status === 'rejected';
+      await sendTaskSubmissionEmail(
+        submission.student.studentEmail,
+        submission.student.studentName || 'Student',
+        {
+          prUrl: submission.githubPrUrl || '',
+          branch: submission.githubBranch || '',
+          module: submission.task.title,
+          day: 1,
+          domain: 'Cohort Task',
+          status: isApproved ? 'accepted' : isRejected ? 'rejected' : 'pending',
+          pointsAwarded: pointsEarned || undefined
+        }
+      ).catch(err => console.warn('Non-fatal review email dispatch error:', err));
+    }
+
     return res.json({
       success: true,
       message: 'Submission reviewed successfully',
@@ -697,6 +736,9 @@ router.post('/submissions/:submissionId/review', authMiddleware, async (req: Aut
     console.error('Error reviewing submission:', error);
     return res.status(500).json({ error: 'Failed to review submission' });
   }
-});
+};
+
+router.post('/submissions/:submissionId/review', authMiddleware, reviewHandler);
+router.patch('/submissions/:submissionId/review', authMiddleware, reviewHandler);
 
 export default router;
