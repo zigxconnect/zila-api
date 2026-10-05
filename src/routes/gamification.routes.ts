@@ -113,16 +113,19 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
     const { limit = '10' } = req.query;
     const cacheKey = `leaderboard:${cohortId}:${limit}`;
 
-    // Background sync of any pending GitHub PRs for this cohort
-    GitHubPrSyncService.syncPendingSubmissions(cohortId).catch((err) =>
-      console.warn('[Leaderboard] Background PR sync warning:', err.message)
-    );
+    // Await sync BEFORE checking cache so fresh data is used
+    const synced = await GitHubPrSyncService.syncPendingSubmissions(cohortId);
+    if (synced > 0) {
+      // Bust cache when new merges were detected
+      CacheService.del(cacheKey);
+    }
 
     const cached = CacheService.get<any>(cacheKey);
     if (cached) {
       return res.json({ leaderboard: cached });
     }
 
+    // Fetch students enrolled in this cohort
     const students = await withDbRetry(() =>
       prisma.cohortStudent.findMany({
         where: {
@@ -130,7 +133,6 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
           status: 'active',
         },
         include: {
-          gamificationPoints: true,
           tasksSubmitted: {
             orderBy: { submittedAt: 'desc' },
             take: 1,
@@ -143,32 +145,109 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
       })
     );
 
-    // Calculate leaderboard with STATUS column
-    const leaderboard = students
-      .map((student) => {
-        const latestSub = student.tasksSubmitted[0];
-        let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
-        if (latestSub) {
-          if (latestSub.status === 'approved' || latestSub.status === 'accepted') {
-            prStatus = 'accepted';
-          } else if (latestSub.status === 'rejected') {
+    // Bulk fetch all enrollments, points, and submissions to avoid N+1 database roundtrips
+    const studentUserIds = students.map((s) => s.studentId).filter(Boolean);
+
+    const allEnrollments = await withDbRetry(() =>
+      prisma.cohortStudent.findMany({
+        where: { studentId: { in: studentUserIds } },
+        select: { id: true, studentId: true },
+      })
+    );
+
+    const allEnrollmentIds = allEnrollments.map((e) => e.id);
+    const userEnrollmentMap = new Map<string, string[]>();
+    const enrollmentUserMap = new Map<string, string>();
+
+    for (const e of allEnrollments) {
+      enrollmentUserMap.set(e.id, e.studentId);
+      const list = userEnrollmentMap.get(e.studentId) || [];
+      list.push(e.id);
+      userEnrollmentMap.set(e.studentId, list);
+    }
+
+    const [allPoints, allSubmissions] = await Promise.all([
+      withDbRetry(() =>
+        prisma.gamificationPoint.findMany({
+          where: { studentId: { in: allEnrollmentIds } },
+          select: { studentId: true, points: true },
+        })
+      ),
+      withDbRetry(() =>
+        prisma.taskSubmission.findMany({
+          where: { studentId: { in: allEnrollmentIds } },
+          orderBy: { submittedAt: 'desc' },
+          select: { studentId: true, status: true, githubPrUrl: true, submittedAt: true },
+        })
+      ),
+    ]);
+
+    // Map total points per user
+    const userPointsMap = new Map<string, number>();
+    for (const gp of allPoints) {
+      const userId = enrollmentUserMap.get(gp.studentId);
+      if (userId) {
+        userPointsMap.set(userId, (userPointsMap.get(userId) || 0) + gp.points);
+      }
+    }
+
+    // Map latest submission per user
+    const userSubmissionsMap = new Map<string, any[]>();
+    for (const sub of allSubmissions) {
+      const userId = enrollmentUserMap.get(sub.studentId);
+      if (userId) {
+        const list = userSubmissionsMap.get(userId) || [];
+        list.push(sub);
+        userSubmissionsMap.set(userId, list);
+      }
+    }
+
+    const leaderboard = students.map((student) => {
+      const totalPoints = userPointsMap.get(student.studentId) || 0;
+      const thisCohortSub = student.tasksSubmitted[0];
+      const userSubs = userSubmissionsMap.get(student.studentId) || [];
+
+      let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
+      let prUrl = thisCohortSub?.githubPrUrl || null;
+
+      if (thisCohortSub) {
+        if (thisCohortSub.status === 'approved' || thisCohortSub.status === 'accepted') {
+          prStatus = 'accepted';
+        } else if (thisCohortSub.status === 'rejected') {
+          prStatus = 'rejected';
+        } else {
+          prStatus = 'pending';
+        }
+      } else if (userSubs.length > 0) {
+        const approvedSub = userSubs.find((s) => s.status === 'approved' || s.status === 'accepted');
+        if (approvedSub) {
+          prStatus = 'accepted';
+          prUrl = approvedSub.githubPrUrl;
+        } else {
+          const rejectedSub = userSubs.find((s) => s.status === 'rejected');
+          if (rejectedSub) {
             prStatus = 'rejected';
+            prUrl = rejectedSub.githubPrUrl;
           } else {
             prStatus = 'pending';
+            prUrl = userSubs[0].githubPrUrl;
           }
         }
+      }
 
-        return {
-          studentId: student.studentId,
-          studentName: student.studentName,
-          studentEmail: student.studentEmail,
-          totalPoints: student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0),
-          latestScore: student.weeklyScores[0]?.overallScore || 0,
-          status: prStatus,
-          latestPrUrl: latestSub?.githubPrUrl || null,
-          rank: 0,
-        };
-      })
+      return {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        studentEmail: student.studentEmail,
+        totalPoints,
+        latestScore: student.weeklyScores[0]?.overallScore || 0,
+        status: prStatus,
+        latestPrUrl: prUrl,
+        rank: 0,
+      };
+    });
+
+    const ranked = leaderboard
       .sort((a, b) => b.totalPoints - a.totalPoints)
       .slice(0, parseInt(limit as string))
       .map((entry, index) => ({
@@ -176,13 +255,13 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
         rank: index + 1,
       }));
 
-    CacheService.set(cacheKey, leaderboard, 45); // 45s fast cache
-    return res.json({ leaderboard });
+    CacheService.set(cacheKey, ranked, 30); // 30s cache (shorter to stay fresh)
+    return res.json({ leaderboard: ranked });
   } catch (error: any) {
     console.error('Error fetching leaderboard:', error);
-    // If database timed out but we have a cache or want to return graceful fallback
     const { cohortId } = req.params;
     const { limit = '10' } = req.query;
+
     const fallback = CacheService.get<any>(`leaderboard:${cohortId}:${limit}`);
     if (fallback) {
       return res.json({ leaderboard: fallback });

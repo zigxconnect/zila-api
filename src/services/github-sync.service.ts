@@ -10,10 +10,6 @@ export interface GitHubPullResponse {
 }
 
 export class GitHubPrSyncService {
-  /**
-   * Parse owner, repo, and PR number from a pull request URL
-   * e.g. https://github.com/iws3/sample_repo_zila/pull/42
-   */
   static parsePrUrl(url?: string | null): { owner: string; repo: string; pullNumber: number } | null {
     if (!url) return null;
     const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i);
@@ -25,27 +21,28 @@ export class GitHubPrSyncService {
     };
   }
 
-  /**
-   * Fetch current PR state from GitHub REST API
-   */
-  static async fetchPrState(owner: string, repo: string, pullNumber: number): Promise<GitHubPullResponse | null> {
+  static async fetchPrState(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    token?: string,
+  ): Promise<GitHubPullResponse | null> {
     try {
       const headers: Record<string, string> = {
         'User-Agent': 'Zigex-Zila-Automation/1.0',
         Accept: 'application/vnd.github.v3+json',
       };
-      if (process.env.GITHUB_TOKEN) {
-        headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-      }
+      const authToken = token || process.env.GITHUB_TOKEN;
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`, {
-        headers,
-      });
-
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`,
+        { headers },
+      );
       if (!res.ok) {
+        console.warn(`[GitHubPrSyncService] GitHub API ${res.status} for PR #${pullNumber}`);
         return null;
       }
-
       const data = (await res.json()) as any;
       return {
         state: data.state,
@@ -61,24 +58,58 @@ export class GitHubPrSyncService {
   }
 
   /**
-   * Check and synchronize pending PR submissions for a cohort or specific student
+   * Check if ANY merged PR exists on the same branch (detects when PR#5 merged
+   * but submission still references the newer open PR#6 on the same branch).
    */
-  static async syncPendingSubmissions(cohortId?: string): Promise<number> {
+  static async findMergedPrOnBranch(
+    owner: string,
+    repo: string,
+    branchName: string,
+    token?: string,
+  ): Promise<GitHubPullResponse | null> {
+    try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'Zigex-Zila-Automation/1.0',
+        Accept: 'application/vnd.github.v3+json',
+      };
+      const authToken = token || process.env.GITHUB_TOKEN;
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+      const url = `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(branchName)}&state=all`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) return null;
+
+      const pulls = (await res.json()) as any[];
+      const merged = pulls.find((p: any) => p.merged_at !== null);
+      if (merged) {
+        return {
+          state: 'closed',
+          merged: true,
+          merged_at: merged.merged_at,
+          closed_at: merged.merged_at,
+          html_url: merged.html_url,
+        };
+      }
+      return null;
+    } catch (err: any) {
+      console.warn(`[GitHubPrSyncService] Failed branch lookup ${owner}/${repo}@${branchName}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Sync all pending PR submissions globally (no cohortId filter).
+   * Points stored against CohortStudent.id so the leaderboard can aggregate
+   * across cohorts for a given user.
+   */
+  static async syncPendingSubmissions(cohortId?: string, githubToken?: string): Promise<number> {
     try {
       const pendingSubmissions = await withDbRetry(() =>
         prisma.taskSubmission.findMany({
-          where: {
-            status: 'submitted',
-            ...(cohortId && {
-              task: { cohortId },
-            }),
-          },
-          include: {
-            task: true,
-            student: true,
-          },
-          take: 15,
-        })
+          where: { status: 'submitted' },
+          include: { task: true, student: true },
+          take: 30,
+        }),
       );
 
       let updatedCount = 0;
@@ -87,74 +118,112 @@ export class GitHubPrSyncService {
         const parsed = this.parsePrUrl(sub.githubPrUrl);
         if (!parsed) continue;
 
-        const ghState = await this.fetchPrState(parsed.owner, parsed.repo, parsed.pullNumber);
+        let ghState = await this.fetchPrState(parsed.owner, parsed.repo, parsed.pullNumber, githubToken);
+
+        // If linked PR still open, check for a merged PR on the same branch
+        if (ghState && !ghState.merged && sub.githubBranch) {
+          const branchMerged = await this.findMergedPrOnBranch(
+            parsed.owner, parsed.repo, sub.githubBranch, githubToken,
+          );
+          if (branchMerged) {
+            ghState = branchMerged;
+            // Correct the stored PR URL to the actual merged one
+            await withDbRetry(() =>
+              prisma.taskSubmission.update({
+                where: { id: sub.id },
+                data: { githubPrUrl: branchMerged.html_url },
+              }),
+            );
+          }
+        }
+
         if (!ghState) continue;
 
+        const pointsToAward = sub.task.maxPoints || 25;
+
         if (ghState.merged) {
-          // PR WAS MERGED ON GITHUB!
-          const pointsToAward = sub.task.maxPoints || 25;
+          // Duplicate guard — prevents double-awarding merge bonus
+          const existingMergePoint = await prisma.gamificationPoint.findFirst({
+            where: {
+              studentId: sub.student.id,
+              relatedTaskId: sub.taskId,
+              pointType: 'task_completion_merge',
+            },
+          });
 
-          await withDbRetry(() =>
-            prisma.taskSubmission.update({
-              where: { id: sub.id },
-              data: {
-                status: 'approved',
-                pointsEarned: pointsToAward,
-                feedback: 'Pull request successfully merged into cohort repository.',
-                reviewedAt: new Date(ghState.merged_at || Date.now()),
-              },
-            })
-          );
+          // Always update submission to approved
+          if (sub.status === 'submitted') {
+            await withDbRetry(() =>
+              prisma.taskSubmission.update({
+                where: { id: sub.id },
+                data: {
+                  status: 'approved',
+                  pointsEarned: pointsToAward,
+                  feedback: 'Pull request successfully merged into cohort repository.',
+                  reviewedAt: new Date(ghState!.merged_at || Date.now()),
+                },
+              }),
+            );
+          }
 
-          // Award gamification points to adjust leaderboard
-          await withDbRetry(() =>
-            prisma.gamificationPoint.create({
-              data: {
-                studentId: sub.studentId,
-                pointType: 'task_completion',
-                points: pointsToAward,
-                reason: `PR merged for "${sub.task.title}"`,
-                relatedTaskId: sub.taskId,
-              },
-            })
-          );
+          if (!existingMergePoint) {
+            // Award merge bonus points (CohortStudent.id for the relation)
+            await withDbRetry(() =>
+              prisma.gamificationPoint.create({
+                data: {
+                  studentId: sub.student.id,
+                  pointType: 'task_completion_merge',
+                  points: pointsToAward,
+                  reason: `PR merged for "${sub.task.title}"`,
+                  relatedTaskId: sub.taskId,
+                },
+              }),
+            );
 
-          // Dispatch confirmation email to intern
-          if (sub.student?.studentEmail) {
-            await sendTaskSubmissionEmail(sub.student.studentEmail, sub.student.studentName || 'Student', {
-              prUrl: sub.githubPrUrl || ghState.html_url,
-              branch: sub.githubBranch || 'main',
-              module: sub.task.title,
-              day: 1,
-              domain: 'Cohort Task',
-              status: 'accepted',
-              pointsAwarded: pointsToAward,
-            }).catch((err) => console.warn('Non-fatal email send error:', err));
+            // Send accepted email
+            if (sub.student?.studentEmail) {
+              await sendTaskSubmissionEmail(
+                sub.student.studentEmail,
+                sub.student.studentName || 'Student',
+                {
+                  prUrl: ghState.html_url,
+                  branch: sub.githubBranch || 'main',
+                  module: sub.task.title,
+                  day: 1,
+                  domain: 'Cohort Task',
+                  status: 'accepted',
+                  pointsAwarded: pointsToAward,
+                },
+              ).catch((e) => console.warn('Non-fatal email send error:', e));
+            }
           }
 
           updatedCount++;
         } else if (ghState.state === 'closed' && !ghState.merged) {
-          // PR was closed without merge
           await withDbRetry(() =>
             prisma.taskSubmission.update({
               where: { id: sub.id },
               data: {
                 status: 'rejected',
                 feedback: 'Pull request was closed without merge.',
-                reviewedAt: new Date(ghState.closed_at || Date.now()),
+                reviewedAt: new Date(ghState!.closed_at || Date.now()),
               },
-            })
+            }),
           );
 
           if (sub.student?.studentEmail) {
-            await sendTaskSubmissionEmail(sub.student.studentEmail, sub.student.studentName || 'Student', {
-              prUrl: sub.githubPrUrl || ghState.html_url,
-              branch: sub.githubBranch || 'main',
-              module: sub.task.title,
-              day: 1,
-              domain: 'Cohort Task',
-              status: 'rejected',
-            }).catch((err) => console.warn('Non-fatal email send error:', err));
+            await sendTaskSubmissionEmail(
+              sub.student.studentEmail,
+              sub.student.studentName || 'Student',
+              {
+                prUrl: sub.githubPrUrl || ghState.html_url,
+                branch: sub.githubBranch || 'main',
+                module: sub.task.title,
+                day: 1,
+                domain: 'Cohort Task',
+                status: 'rejected',
+              },
+            ).catch((e) => console.warn('Non-fatal email send error:', e));
           }
 
           updatedCount++;
