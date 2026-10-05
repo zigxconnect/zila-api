@@ -124,6 +124,9 @@ export class CohortService {
         const supervisorName = supervisor?.full_name || 'Program Supervisor';
         const supervisorEmail = supervisor?.email || '';
 
+        const detectedLevel = (app.level || opportunity?.level || (/advanced/i.test(rawTitle) ? 'advanced' : /beginner/i.test(rawTitle) ? 'beginner' : 'intermediate')).toLowerCase();
+        const detectedRepo = opportunity?.github_repo_url || opportunity?.repo_url || supervisor?.github_repo_url || null;
+
         // Upsert Cohort in Neon DB via Prisma
         let cohort = await prisma.cohort.findFirst({
           where: {
@@ -142,24 +145,32 @@ export class CohortService {
               programId: actualRefId,
               programType: type,
               department: department,
-              level: 'intermediate',
+              level: detectedLevel,
               startDate,
               endDate,
               isActive: true,
               supervisorId,
               supervisorName,
               supervisorEmail,
+              githubRepoUrl: detectedRepo,
             },
           });
-        } else if (supervisorId && !cohort.supervisorId) {
-          cohort = await prisma.cohort.update({
-            where: { id: cohort.id },
-            data: {
-              supervisorId,
-              supervisorName,
-              supervisorEmail,
-            },
-          });
+        } else {
+          const updateData: any = {};
+          if (supervisorId && !cohort.supervisorId) {
+            updateData.supervisorId = supervisorId;
+            updateData.supervisorName = supervisorName;
+            updateData.supervisorEmail = supervisorEmail;
+          }
+          if (detectedRepo && !cohort.githubRepoUrl) {
+            updateData.githubRepoUrl = detectedRepo;
+          }
+          if (Object.keys(updateData).length > 0) {
+            cohort = await prisma.cohort.update({
+              where: { id: cohort.id },
+              data: updateData,
+            });
+          }
         }
 
         // Upsert current student in CohortStudent
@@ -452,6 +463,38 @@ export class CohortService {
         totalMembers: members.length + (supervisorAdmin ? 1 : 0),
       };
     });
+  }
+
+  /**
+   * Get single cohort with complete metadata (level, department, supervisor, githubRepoUrl)
+   */
+  static async getCohortById(cohortId: string) {
+    const cacheKey = `cohort:meta:${cohortId}`;
+    return CacheService.wrap(cacheKey, 120, async () => {
+      const cohort = await prisma.cohort.findUnique({
+        where: { id: cohortId },
+        include: {
+          _count: {
+            select: { students: true, tasks: true, documents: true },
+          },
+        },
+      });
+      return cohort;
+    });
+  }
+
+  /**
+   * Update GitHub repository URL for a cohort program
+   */
+  static async updateCohortRepo(cohortId: string, githubRepoUrl: string) {
+    const updated = await prisma.cohort.update({
+      where: { id: cohortId },
+      data: { githubRepoUrl },
+    });
+    // Invalidate caches
+    CacheService.del(`cohort:meta:${cohortId}`);
+    CacheService.del(`chat:cohort:${cohortId}`);
+    return updated;
   }
 }
 
