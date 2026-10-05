@@ -83,10 +83,27 @@ router.get('/my-stats', authMiddleware, async (req: AuthenticatedRequest, res: R
  * @swagger
  * /api/gamification/leaderboard/{cohortId}:
  *   get:
- *     summary: Get leaderboard for a cohort
+ *     summary: Get leaderboard for a cohort with task PR submission status
+ *     description: Returns sorted ranking of cohort members, points, latest weekly sprint score, and latest PR submission status (pending, accepted, rejected, none).
  *     tags: [Gamification]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: cohortId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the cohort
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of leaderboard entries
+ *     responses:
+ *       200:
+ *         description: Cohort leaderboard with PR status indicators
  */
 router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
