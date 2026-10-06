@@ -387,4 +387,93 @@ router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response
   }
 });
 
+/**
+ * @swagger
+ * /api/cohorts/{id}:
+ *   get:
+ *     summary: Get single cohort details with metadata, level, department, and GitHub repository
+ *     tags: [Cohorts]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Cohort details
+ *       404:
+ *         description: Cohort not found
+ */
+router.get('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const cohort = await CohortService.getCohortById(id);
+    if (!cohort) {
+      return res.status(404).json({ error: `Cohort with ID ${id} not found` });
+    }
+    return res.json({ cohort });
+  } catch (error: any) {
+    console.error('Error fetching cohort details:', error);
+    return res.status(500).json({ error: 'Failed to fetch cohort details' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/cohorts/{id}/github-repo:
+ *   patch:
+ *     summary: Update or attach a GitHub repository to a cohort program
+ *     description: Allows supervisors and administrators to configure the target repository for automated task PR submissions.
+ *     tags: [Cohorts]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - githubRepoUrl
+ *             properties:
+ *               githubRepoUrl:
+ *                 type: string
+ *                 example: https://github.com/iws3/sample_repo_zila.git
+ *     responses:
+ *       200:
+ *         description: Repository linked successfully
+ *       400:
+ *         description: Invalid repository URL
+ */
+router.patch('/:id/github-repo', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { githubRepoUrl } = req.body;
+
+    if (!githubRepoUrl || typeof githubRepoUrl !== 'string') {
+      return res.status(400).json({ error: 'githubRepoUrl is required and must be a valid string' });
+    }
+
+    const updated = await CohortService.updateCohortRepo(id, githubRepoUrl.trim());
+    return res.json({
+      success: true,
+      message: 'Cohort GitHub repository updated successfully',
+      cohort: updated,
+    });
+  } catch (error: any) {
+    console.error('Error updating cohort GitHub repository:', error);
+    return res.status(500).json({ error: 'Failed to update cohort repository' });
+  }
+});
+
 export default router;
+

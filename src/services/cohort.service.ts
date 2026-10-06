@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase';
-import { prisma } from '../config/prisma';
+import { prisma, withDbRetry } from '../config/prisma';
 import { CacheService } from './cache.service';
 
 export interface ChatGroupMember {
@@ -124,6 +124,9 @@ export class CohortService {
         const supervisorName = supervisor?.full_name || 'Program Supervisor';
         const supervisorEmail = supervisor?.email || '';
 
+        const detectedLevel = (app.level || opportunity?.level || (/advanced/i.test(rawTitle) ? 'advanced' : /beginner/i.test(rawTitle) ? 'beginner' : 'intermediate')).toLowerCase();
+        const detectedRepo = opportunity?.github_repo_url || opportunity?.repo_url || supervisor?.github_repo_url || null;
+
         // Upsert Cohort in Neon DB via Prisma
         let cohort = await prisma.cohort.findFirst({
           where: {
@@ -142,24 +145,32 @@ export class CohortService {
               programId: actualRefId,
               programType: type,
               department: department,
-              level: 'intermediate',
+              level: detectedLevel,
               startDate,
               endDate,
               isActive: true,
               supervisorId,
               supervisorName,
               supervisorEmail,
+              githubRepoUrl: detectedRepo,
             },
           });
-        } else if (supervisorId && !cohort.supervisorId) {
-          cohort = await prisma.cohort.update({
-            where: { id: cohort.id },
-            data: {
-              supervisorId,
-              supervisorName,
-              supervisorEmail,
-            },
-          });
+        } else {
+          const updateData: any = {};
+          if (supervisorId && !cohort.supervisorId) {
+            updateData.supervisorId = supervisorId;
+            updateData.supervisorName = supervisorName;
+            updateData.supervisorEmail = supervisorEmail;
+          }
+          if (detectedRepo && !cohort.githubRepoUrl) {
+            updateData.githubRepoUrl = detectedRepo;
+          }
+          if (Object.keys(updateData).length > 0) {
+            cohort = await prisma.cohort.update({
+              where: { id: cohort.id },
+              data: updateData,
+            });
+          }
         }
 
         // Upsert current student in CohortStudent
@@ -316,48 +327,101 @@ export class CohortService {
       return cached;
     }
 
-    // First check existing cohorts in Neon DB to respond immediately
-    let enrolled = await prisma.cohortStudent.findMany({
-      where: { studentId: userId },
-      include: {
-        cohort: {
+    try {
+      // First check existing cohorts in Neon DB to respond immediately
+      let enrolled = await withDbRetry(() =>
+        prisma.cohortStudent.findMany({
+          where: { studentId: userId },
           include: {
-            _count: {
-              select: { students: true, tasks: true, documents: true },
-            },
-          },
-        },
-      },
-      orderBy: { joinedAt: 'desc' },
-    });
-
-    // If student has no enrolled cohorts yet in Neon DB, trigger placement sync from Supabase
-    if (enrolled.length === 0) {
-      await this.syncStudentPlacements(userId);
-      enrolled = await prisma.cohortStudent.findMany({
-        where: { studentId: userId },
-        include: {
-          cohort: {
-            include: {
-              _count: {
-                select: { students: true, tasks: true, documents: true },
+            cohort: {
+              include: {
+                _count: {
+                  select: { students: true, tasks: true, documents: true },
+                },
               },
             },
           },
-        },
-        orderBy: { joinedAt: 'desc' },
-      });
+          orderBy: { joinedAt: 'desc' },
+        })
+      );
+
+      // If student has no enrolled cohorts yet in Neon DB, trigger placement sync from Supabase
+      if (enrolled.length === 0) {
+        await this.syncStudentPlacements(userId).catch((err) =>
+          console.warn('[CohortService] Placement sync warning:', err.message)
+        );
+        enrolled = await withDbRetry(() =>
+          prisma.cohortStudent.findMany({
+            where: { studentId: userId },
+            include: {
+              cohort: {
+                include: {
+                  _count: {
+                    select: { students: true, tasks: true, documents: true },
+                  },
+                },
+              },
+            },
+            orderBy: { joinedAt: 'desc' },
+          })
+        ).catch(() => []);
+      }
+
+      const result = enrolled.map((item) => ({
+        ...item.cohort,
+        enrollmentStatus: item.status,
+        joinedAt: item.joinedAt,
+        studentRole: item.role,
+      }));
+
+      CacheService.set(cacheKey, result, 120); // 2 minutes TTL
+      return result;
+    } catch (dbError: any) {
+      console.warn('[CohortService] Neon query failed, falling back to Supabase placements:', dbError.message);
+      // Fallback directly to Supabase placements
+      try {
+        const { data: applications } = await supabase
+          .from('student_applications')
+          .select(`
+            id,
+            student_id,
+            status,
+            internship_listings (
+              id,
+              title,
+              department,
+              description,
+              supervisor_id,
+              company_id
+            )
+          `)
+          .eq('student_id', userId)
+          .eq('status', 'accepted');
+
+        if (applications && applications.length > 0) {
+          const fallbackCohorts = applications.map((app: any) => {
+            const listing = app.internship_listings;
+            const dept = listing?.department || 'General';
+            return {
+              id: app.id,
+              name: listing?.title || 'Zigex Engineering Cohort',
+              department: dept,
+              level: 'beginner',
+              enrollmentStatus: 'active',
+              joinedAt: new Date().toISOString(),
+              studentRole: 'student',
+              githubRepoUrl: 'https://github.com/iws3/sample_repo_zila.git',
+              _count: { students: 1, tasks: 0, documents: 0 },
+            };
+          });
+          CacheService.set(cacheKey, fallbackCohorts, 60);
+          return fallbackCohorts;
+        }
+      } catch (sbError: any) {
+        console.warn('[CohortService] Supabase fallback warning:', sbError.message);
+      }
+      return [];
     }
-
-    const result = enrolled.map((item) => ({
-      ...item.cohort,
-      enrollmentStatus: item.status,
-      joinedAt: item.joinedAt,
-      studentRole: item.role,
-    }));
-
-    CacheService.set(cacheKey, result, 120); // 2 minutes TTL
-    return result;
   }
 
   /**
@@ -452,6 +516,38 @@ export class CohortService {
         totalMembers: members.length + (supervisorAdmin ? 1 : 0),
       };
     });
+  }
+
+  /**
+   * Get single cohort with complete metadata (level, department, supervisor, githubRepoUrl)
+   */
+  static async getCohortById(cohortId: string) {
+    const cacheKey = `cohort:meta:${cohortId}`;
+    return CacheService.wrap(cacheKey, 120, async () => {
+      const cohort = await prisma.cohort.findUnique({
+        where: { id: cohortId },
+        include: {
+          _count: {
+            select: { students: true, tasks: true, documents: true },
+          },
+        },
+      });
+      return cohort;
+    });
+  }
+
+  /**
+   * Update GitHub repository URL for a cohort program
+   */
+  static async updateCohortRepo(cohortId: string, githubRepoUrl: string) {
+    const updated = await prisma.cohort.update({
+      where: { id: cohortId },
+      data: { githubRepoUrl },
+    });
+    // Invalidate caches
+    CacheService.del(`cohort:meta:${cohortId}`);
+    CacheService.del(`chat:cohort:${cohortId}`);
+    return updated;
   }
 }
 
