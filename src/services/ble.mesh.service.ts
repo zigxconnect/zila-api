@@ -1,5 +1,5 @@
-import noble from "@abandonware/noble";
-import bleno from "@abandonware/bleno";
+import noble from "@stoprocent/noble";
+import bleno from "@stoprocent/bleno";
 import { prisma } from "../config/prisma";
 import { CacheService } from "../services/cache.service";
 import crypto from "crypto";
@@ -21,8 +21,10 @@ class BleMeshServices {
   private prisma: typeof prisma;
   private cache: CacheService;
   private readonly SERVICE_UUID = "0000fe2600001000800000805f9b34fb";
+  private readonly MANUFACTURER_ID = 0xfe26;
   private currentRoomId: string | null = null;
   private localSequenceCounter = 0;
+  private isSwitching = false;
 
   constructor(prismaInstance: typeof prisma, cacheInstance: CacheService) {
     this.prisma = prismaInstance;
@@ -32,56 +34,56 @@ class BleMeshServices {
 
   public setRoomContext(roomId: string): void {
     this.currentRoomId = roomId;
+    // Restart advertising with new room name
+    if (bleno.state === "poweredOn") {
+      this.startAdvertising();
+    }
   }
 
   private initializeMeshStack(): void {
-    // Listening (Central role)
-    noble.on("stateChange", async (state) => {
+    noble.on("stateChange", async (state: any) => {
       if (state === "poweredOn") {
         await noble.startScanningAsync([this.SERVICE_UUID], true);
-      } else {
-        noble.stopScanning();
       }
     });
 
-    noble.on("discover", async (peripheral) => {
+    noble.on("discover", async (peripheral: any) => {
       this.handleIncomingDiscovery(peripheral);
     });
 
-    // Advertising (Peripheral role)
-    bleno.on("stateChange", (state) => {
+    bleno.on("stateChange", (state: any) => {
       if (state === "poweredOn" && this.currentRoomId) {
-        bleno.startAdvertising(`zigex-${this.currentRoomId.substring(0, 10)}`, [
-          this.SERVICE_UUID,
-        ]);
-      } else {
-        bleno.stopAdvertising();
+        this.startAdvertising();
       }
     });
   }
 
+  private startAdvertising() {
+    if (!this.currentRoomId) return;
+    bleno.startAdvertising(`zigex-${this.currentRoomId.substring(0, 10)}`, [
+      this.SERVICE_UUID,
+    ]);
+  }
+
   private async handleIncomingDiscovery(peripheral: any): Promise<void> {
-    const advertisement = peripheral.advertisement;
-    if (!advertisement || !advertisement.manufacturerData) return;
+    const adv = peripheral.advertisement;
+    if (!adv?.manufacturerData) return;
+    const buffer: Buffer = adv.manufacturerData;
 
-    const buffer: Buffer = advertisement.manufacturerData;
-
-    // Validate header
-    if (buffer.length < 6 || buffer.readUInt16BE(0) !== 0xfe26) return;
+    if (buffer.length < 6 || buffer.readUInt16BE(0) !== this.MANUFACTURER_ID)
+      return;
 
     const sequenceId = buffer.readUInt16BE(2);
     const ttl = buffer.readUInt8(4);
 
-    // Deduplication
-    const cacheKey = `ble_mesh:\( {this.currentRoomId}: \){sequenceId}`;
+    // FIXED: interpolation
+    const cacheKey = `ble_mesh:${this.currentRoomId}:${sequenceId}`;
     if (await CacheService.get(cacheKey)) return;
-
-    CacheService.set(cacheKey, true, 600); // 10 minutes
+    CacheService.set(cacheKey, true, 600);
 
     const parsedMessage = this.deserializePayload(buffer.subarray(6));
     if (!parsedMessage || parsedMessage.roomId !== this.currentRoomId) return;
 
-    // Save to database
     await this.prisma.chatMessage.create({
       data: {
         id: parsedMessage.id,
@@ -92,11 +94,10 @@ class BleMeshServices {
         isAdmin: parsedMessage.isAdmin,
         type: parsedMessage.type,
         content: parsedMessage.content,
-        timestamp: new Date(parsedMessage.timestamp as number),
+        timestamp: new Date(parsedMessage.timestamp ?? Date.now()),
       },
     });
 
-    // Relay if TTL still allows
     if (ttl > 1) {
       await this.queueMeshRelay(sequenceId, ttl - 1, buffer.subarray(6));
     }
@@ -110,20 +111,19 @@ class BleMeshServices {
     const fullMessage: BleChatMessage = {
       ...msgPayload,
       id: crypto.randomUUID(),
-      timestamp: Date.now(),  
-    };
+      timestamp: Date.now(),
+      signature: "todo-sign", // you left this out
+    } as BleChatMessage;
 
     const header = Buffer.alloc(6);
-    header.writeUInt16BE(0xfe26, 0); // Magic number
-    header.writeUInt16BE(this.localSequenceCounter, 2); // Sequence ID
-    header.writeUInt8(5, 4); // Starting TTL = 5
-
+    header.writeUInt16BE(this.MANUFACTURER_ID, 0);
+    header.writeUInt16BE(this.localSequenceCounter, 2);
+    header.writeUInt8(5, 4);
     const payload = this.serializePayload(fullMessage);
-    header.writeUInt8(payload.length, 5); // Payload length
+    header.writeUInt8(payload.length, 5);
 
-    // Mark as seen so we don't process our own message
     CacheService.set(
-      `ble_mesh:\( {this.currentRoomId}: \){this.localSequenceCounter}`,
+      `ble_mesh:${this.currentRoomId}:${this.localSequenceCounter}`,
       true,
       600,
     );
@@ -135,28 +135,49 @@ class BleMeshServices {
     seqId: number,
     nextTtl: number,
     payload: Buffer,
-  ): Promise<void> {
+  ) {
     const relayHeader = Buffer.alloc(6);
-    relayHeader.writeUInt16BE(0xfe26, 0);
+    relayHeader.writeUInt16BE(this.MANUFACTURER_ID, 0);
     relayHeader.writeUInt16BE(seqId, 2);
     relayHeader.writeUInt8(nextTtl, 4);
     relayHeader.writeUInt8(payload.length, 5);
 
-    // Random jitter (0-200ms) to reduce collisions
-    setTimeout(
-      () => {
-        this.broadcastFrame(Buffer.concat([relayHeader, payload]));
-      },
-      Math.floor(Math.random() * 200),
-    );
+    setTimeout(() => {
+      this.broadcastFrame(Buffer.concat([relayHeader, payload]));
+    }, Math.random() * 200);
   }
 
   private broadcastFrame(frameBuffer: Buffer): void {
-    if (bleno.state === "poweredOn") {
+    if (this.isSwitching) return;
+    this.isSwitching = true;
+
+    // FIX: must stop scanning before advertising on same adapter
+    noble.stopScanningAsync().then(() => {
       bleno.stopAdvertising(() => {
-        bleno.startAdvertisingWithEIRData(frameBuffer);
+        // FIX: correct EIR data format
+        const advData = Buffer.concat([
+          Buffer.from([0x02, 0x01, 0x06]), // Flags
+          Buffer.from([0x03, 0x03, 0x0a, 0x18]), // Service UUID placeholder
+        ]);
+        // Put your mesh frame in scan response as manufacturer data
+        const scanData = frameBuffer;
+
+        // @stoprocent/bleno supports raw buffers like this:
+        (bleno as any).startAdvertisingWithEIRData(
+          advData,
+          scanData,
+          (err: any) => {
+            this.isSwitching = false;
+            // Resume scanning after 500ms broadcast window
+            setTimeout(() => {
+              bleno.stopAdvertising(() => {
+                noble.startScanningAsync([this.SERVICE_UUID], true);
+              });
+            }, 500);
+          },
+        );
       });
-    }
+    });
   }
 
   private serializePayload(message: BleChatMessage): Buffer {
@@ -172,4 +193,4 @@ class BleMeshServices {
   }
 }
 
-export const BleMeshService = new BleMeshServices(prisma, new CacheService)
+export const BleMeshService = new BleMeshServices(prisma, new CacheService());

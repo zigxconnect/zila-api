@@ -17,8 +17,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@abandonware/bleno": "^0.6.2",
-    "@abandonware/noble": "^1.9.2-26",
+    "@stoprocent/bleno": "^0.13.1",
+    "@stoprocent/noble": "^2.8.0",
     "@supabase/supabase-js": "^2.39.7",
     "@upstash/redis": "^1.37.0",
     "cors": "^2.8.5",
