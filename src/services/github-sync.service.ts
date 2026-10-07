@@ -106,7 +106,10 @@ export class GitHubPrSyncService {
     try {
       const pendingSubmissions = await withDbRetry(() =>
         prisma.taskSubmission.findMany({
-          where: { status: 'submitted' },
+          where: {
+            status: 'submitted',
+            ...(cohortId && { task: { cohortId } }),
+          },
           include: { task: true, student: true },
           take: 30,
         }),
