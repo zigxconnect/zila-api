@@ -167,7 +167,7 @@ router.get('/curriculum', (req, res) => {
  * /api/tasks/auto-submit:
  *   post:
  *     summary: Automated background PR submission for cohort exercises across any domain
- *     description: Submits a cohort task solution directly from lil-zila's automated background PR pipeline supporting ML, Web, Cyber, Embedded, App, Cloud, or custom domains.
+ *     description: Submits a cohort task solution directly from lil-zila's automated background PR pipeline, strictly bound to the target cohort with points and status isolated per cohort.
  *     tags: [Tasks]
  *     security:
  *       - bearerAuth: []
