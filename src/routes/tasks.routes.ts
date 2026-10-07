@@ -130,7 +130,7 @@ router.get('/quota', authMiddleware, async (req: AuthenticatedRequest, res: Resp
  * /api/tasks/scoring-rubric:
  *   get:
  *     summary: Retrieve day-based scoring weights normalized to 100%
- *     description: Returns rubric for exercise days (Day 1: 1pt, Day 2: 1pt, Day 3: 2pts, Day 4: 4pts) normalized over 100%.
+ *     description: "Returns rubric for exercise days (Day 1: 1pt, Day 2: 1pt, Day 3: 2pts, Day 4: 4pts) normalized over 100%."
  *     tags: [Tasks]
  *     responses:
  *       200:
