@@ -220,7 +220,11 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
     });
 
     if (!enrollment) {
-      return res.status(403).json({ error: 'You are not enrolled in an active cohort' });
+      return res.status(403).json({
+        error: cohortId
+          ? `You are not enrolled in the specified cohort (${cohortId})`
+          : 'You are not enrolled in an active cohort'
+      });
     }
 
     // Check daily PR quota
