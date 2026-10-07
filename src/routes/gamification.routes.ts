@@ -125,7 +125,7 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
       return res.json({ leaderboard: cached });
     }
 
-    // Fetch students enrolled in this cohort
+    // Fetch students enrolled strictly in this cohort with their cohort-specific points and submissions
     const students = await withDbRetry(() =>
       prisma.cohortStudent.findMany({
         where: {
@@ -133,7 +133,11 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
           status: 'active',
         },
         include: {
+          gamificationPoints: true,
           tasksSubmitted: {
+            where: {
+              task: { cohortId },
+            },
             orderBy: { submittedAt: 'desc' },
             take: 1,
           },
@@ -145,93 +149,21 @@ router.get('/leaderboard/:cohortId', authMiddleware, async (req: AuthenticatedRe
       })
     );
 
-    // Bulk fetch all enrollments, points, and submissions to avoid N+1 database roundtrips
-    const studentUserIds = students.map((s) => s.studentId).filter(Boolean);
-
-    const allEnrollments = await withDbRetry(() =>
-      prisma.cohortStudent.findMany({
-        where: { studentId: { in: studentUserIds } },
-        select: { id: true, studentId: true },
-      })
-    );
-
-    const allEnrollmentIds = allEnrollments.map((e) => e.id);
-    const userEnrollmentMap = new Map<string, string[]>();
-    const enrollmentUserMap = new Map<string, string>();
-
-    for (const e of allEnrollments) {
-      enrollmentUserMap.set(e.id, e.studentId);
-      const list = userEnrollmentMap.get(e.studentId) || [];
-      list.push(e.id);
-      userEnrollmentMap.set(e.studentId, list);
-    }
-
-    const [allPoints, allSubmissions] = await Promise.all([
-      withDbRetry(() =>
-        prisma.gamificationPoint.findMany({
-          where: { studentId: { in: allEnrollmentIds } },
-          select: { studentId: true, points: true },
-        })
-      ),
-      withDbRetry(() =>
-        prisma.taskSubmission.findMany({
-          where: { studentId: { in: allEnrollmentIds } },
-          orderBy: { submittedAt: 'desc' },
-          select: { studentId: true, status: true, githubPrUrl: true, submittedAt: true },
-        })
-      ),
-    ]);
-
-    // Map total points per user
-    const userPointsMap = new Map<string, number>();
-    for (const gp of allPoints) {
-      const userId = enrollmentUserMap.get(gp.studentId);
-      if (userId) {
-        userPointsMap.set(userId, (userPointsMap.get(userId) || 0) + gp.points);
-      }
-    }
-
-    // Map latest submission per user
-    const userSubmissionsMap = new Map<string, any[]>();
-    for (const sub of allSubmissions) {
-      const userId = enrollmentUserMap.get(sub.studentId);
-      if (userId) {
-        const list = userSubmissionsMap.get(userId) || [];
-        list.push(sub);
-        userSubmissionsMap.set(userId, list);
-      }
-    }
-
     const leaderboard = students.map((student) => {
-      const totalPoints = userPointsMap.get(student.studentId) || 0;
-      const thisCohortSub = student.tasksSubmitted[0];
-      const userSubs = userSubmissionsMap.get(student.studentId) || [];
+      // Points earned strictly in THIS cohort
+      const totalPoints = student.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0);
+      const latestSub = student.tasksSubmitted[0];
 
       let prStatus: 'pending' | 'accepted' | 'rejected' | 'none' = 'none';
-      let prUrl = thisCohortSub?.githubPrUrl || null;
+      let prUrl = latestSub?.githubPrUrl || null;
 
-      if (thisCohortSub) {
-        if (thisCohortSub.status === 'approved' || thisCohortSub.status === 'accepted') {
+      if (latestSub) {
+        if (latestSub.status === 'approved' || latestSub.status === 'accepted') {
           prStatus = 'accepted';
-        } else if (thisCohortSub.status === 'rejected') {
+        } else if (latestSub.status === 'rejected') {
           prStatus = 'rejected';
         } else {
           prStatus = 'pending';
-        }
-      } else if (userSubs.length > 0) {
-        const approvedSub = userSubs.find((s) => s.status === 'approved' || s.status === 'accepted');
-        if (approvedSub) {
-          prStatus = 'accepted';
-          prUrl = approvedSub.githubPrUrl;
-        } else {
-          const rejectedSub = userSubs.find((s) => s.status === 'rejected');
-          if (rejectedSub) {
-            prStatus = 'rejected';
-            prUrl = rejectedSub.githubPrUrl;
-          } else {
-            prStatus = 'pending';
-            prUrl = userSubs[0].githubPrUrl;
-          }
         }
       }
 
