@@ -83,6 +83,75 @@ router.get('/my-stats', authMiddleware, async (req: AuthenticatedRequest, res: R
 
 /**
  * @swagger
+ * /api/gamification/cohort-stats/{cohortId}:
+ *   get:
+ *     summary: Get isolated gamification metrics for the authenticated student in a specific cohort
+ *     tags: [Gamification]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: cohortId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the cohort
+ */
+router.get('/cohort-stats/:cohortId', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user.sub || req.user.id;
+    const { cohortId } = req.params;
+
+    const enrollment = await withDbRetry(() =>
+      prisma.cohortStudent.findFirst({
+        where: {
+          studentId: userId,
+          cohortId,
+          status: 'active',
+        },
+        include: {
+          cohort: { select: { id: true, name: true, department: true, level: true } },
+          gamificationPoints: true,
+          tasksSubmitted: {
+            where: { task: { cohortId } },
+            orderBy: { submittedAt: 'desc' },
+          },
+        },
+      })
+    );
+
+    if (!enrollment) {
+      return res.status(404).json({ error: 'You are not enrolled in this cohort' });
+    }
+
+    const cohortPoints = enrollment.gamificationPoints.reduce((sum, gp) => sum + gp.points, 0);
+    const latestSub = enrollment.tasksSubmitted[0];
+    const status = latestSub
+      ? latestSub.status === 'approved' || latestSub.status === 'accepted'
+        ? 'accepted'
+        : latestSub.status === 'rejected'
+        ? 'rejected'
+        : 'pending'
+      : 'none';
+
+    return res.json({
+      cohortId: enrollment.cohortId,
+      cohortName: enrollment.cohort.name,
+      department: enrollment.cohort.department,
+      level: enrollment.cohort.level,
+      totalPoints: cohortPoints,
+      submissionsCount: enrollment.tasksSubmitted.length,
+      status,
+      latestPrUrl: latestSub?.githubPrUrl || null,
+    });
+  } catch (error: any) {
+    console.error('Error fetching cohort stats:', error);
+    return res.status(500).json({ error: 'Failed to fetch cohort stats' });
+  }
+});
+
+/**
+ * @swagger
  * /api/gamification/leaderboard/{cohortId}:
  *   get:
  *     summary: Get leaderboard for a cohort with task PR submission status
