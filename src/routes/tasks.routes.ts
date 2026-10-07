@@ -263,7 +263,7 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
           type: 'assignment',
           difficulty: level || 'beginner',
           skills: [cleanDomain, cleanModule],
-          maxPoints: ScoringNormalizationService.DAY_WEIGHTS[dayNumber] || 1,
+          maxPoints: ScoringNormalizationService.getRubricMark(dayNumber),
           githubRequired: true,
           prRequired: true,
           assignedBy: enrollment.cohort.supervisorId || userId,

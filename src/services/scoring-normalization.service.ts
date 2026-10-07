@@ -26,6 +26,13 @@ export class ScoringNormalizationService {
   public static readonly TOTAL_RAW_WEIGHT = 8; // 1 + 1 + 2 + 4
 
   /**
+   * Returns raw rubric mark for a specific exercise day (1 mark for Day 1/2)
+   */
+  static getRubricMark(day: number): number {
+    return this.DAY_WEIGHTS[day] ?? 1;
+  }
+
+  /**
    * Returns weight definitions normalized over 100
    */
   static getRubric(): DayWeightDefinition[] {
