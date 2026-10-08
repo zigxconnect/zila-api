@@ -68,14 +68,14 @@ export class GitHubPrSyncService {
   }
 
   /**
-   * Check if ANY merged PR exists on the same branch (detects when PR#5 merged
-   * but submission still references the newer open PR#6 on the same branch).
+   * Check if a merged PR exists on the same branch that was merged around or after minDate.
    */
   static async findMergedPrOnBranch(
     owner: string,
     repo: string,
     branchName: string,
     token?: string,
+    minDate?: Date,
   ): Promise<GitHubPullResponse | null> {
     try {
       const headers: Record<string, string> = {
@@ -85,19 +85,33 @@ export class GitHubPrSyncService {
       const authToken = token || process.env.GITHUB_TOKEN;
       if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-      const url = `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(branchName)}&state=all`;
+      const url = `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(owner)}:${encodeURIComponent(branchName)}&state=all&sort=updated&direction=desc`;
       const res = await fetch(url, { headers });
       if (!res.ok) return null;
 
       const pulls = (await res.json()) as any[];
-      const merged = pulls.find((p: any) => p.merged_at !== null);
-      if (merged) {
+      if (!Array.isArray(pulls)) return null;
+
+      const mergedPulls = pulls.filter((p: any) => {
+        if (!p.merged_at) return false;
+        if (minDate) {
+          const mergedTime = new Date(p.merged_at).getTime();
+          const threshold = minDate.getTime() - 5 * 60 * 1000; // 5 minute grace buffer
+          return mergedTime >= threshold;
+        }
+        return true;
+      });
+
+      mergedPulls.sort((a: any, b: any) => new Date(b.merged_at).getTime() - new Date(a.merged_at).getTime());
+
+      const latestMerged = mergedPulls[0];
+      if (latestMerged) {
         return {
           state: 'closed',
           merged: true,
-          merged_at: merged.merged_at,
-          closed_at: merged.merged_at,
-          html_url: merged.html_url,
+          merged_at: latestMerged.merged_at,
+          closed_at: latestMerged.merged_at,
+          html_url: latestMerged.html_url,
         };
       }
       return null;
@@ -108,8 +122,8 @@ export class GitHubPrSyncService {
   }
 
   /**
-   * Sync all pending PR submissions globally (no cohortId filter).
-   * Points stored against CohortStudent.id so the leaderboard can aggregate
+   * Sync all pending PR submissions globally or for a specific cohort.
+   * Points stored against CohortStudent.id so the leaderboard isolates
    * across cohorts for a given user.
    */
   static async syncPendingSubmissions(cohortId?: string, githubToken?: string): Promise<number> {
@@ -132,19 +146,30 @@ export class GitHubPrSyncService {
         if (!parsed) continue;
 
         let ghState: GitHubPullResponse | null = null;
-        if ('pullNumber' in parsed && typeof (parsed as any).pullNumber === 'number') {
+        const hasExplicitPrNumber = 'pullNumber' in parsed && typeof (parsed as any).pullNumber === 'number';
+
+        if (hasExplicitPrNumber) {
           ghState = await this.fetchPrState(parsed.owner, parsed.repo, (parsed as any).pullNumber, githubToken);
         }
 
+        // If explicitly submitted PR is still OPEN, do NOT hijack it with older merged PRs on the branch!
+        if (ghState && ghState.state === 'open' && !ghState.merged) {
+          continue;
+        }
 
-        // If linked PR is not merged or missing, check for any merged PR on the same branch
-        if ((!ghState || !ghState.merged) && sub.githubBranch) {
+        // Only search branch if:
+        // 1. No explicit PR number was provided, OR
+        // 2. The explicit PR was closed without merge and a newer merged PR was created on the same branch
+        if ((!ghState || (ghState.state === 'closed' && !ghState.merged)) && sub.githubBranch) {
           const branchMerged = await this.findMergedPrOnBranch(
-            parsed.owner, parsed.repo, sub.githubBranch, githubToken,
+            parsed.owner,
+            parsed.repo,
+            sub.githubBranch,
+            githubToken,
+            sub.submittedAt,
           );
           if (branchMerged) {
             ghState = branchMerged;
-            // Correct the stored PR URL to the actual merged one
             await withDbRetry(() =>
               prisma.taskSubmission.update({
                 where: { id: sub.id },
@@ -156,15 +181,26 @@ export class GitHubPrSyncService {
 
         if (!ghState) continue;
 
+        // If still open after all checks, keep submission in 'submitted' status
+        if (ghState.state === 'open' && !ghState.merged) {
+          continue;
+        }
+
         const pointsToAward = sub.task.maxPoints && sub.task.maxPoints <= 4 ? sub.task.maxPoints : 1;
 
         if (ghState.merged) {
-          // Duplicate guard — prevents double-awarding merge bonus
+          const prNumberMatch = ghState.html_url.match(/\/pull\/(\d+)/);
+          const prNum = prNumberMatch ? prNumberMatch[1] : null;
+
+          // Duplicate guard — checks if this specific PR has already awarded merge points to this student
           const existingMergePoint = await prisma.gamificationPoint.findFirst({
             where: {
               studentId: sub.student.id,
-              relatedTaskId: sub.taskId,
               pointType: 'task_completion_merge',
+              OR: [
+                { reason: { contains: ghState.html_url } },
+                ...(prNum ? [{ reason: { contains: `PR #${prNum}` } }] : []),
+              ],
             },
           });
 
@@ -191,7 +227,7 @@ export class GitHubPrSyncService {
                   studentId: sub.student.id,
                   pointType: 'task_completion_merge',
                   points: pointsToAward,
-                  reason: `PR merged for "${sub.task.title}"`,
+                  reason: `PR #${prNum || 'merged'} merged for "${sub.task.title}" (${ghState.html_url})`,
                   relatedTaskId: sub.taskId,
                 },
               }),
@@ -246,6 +282,7 @@ export class GitHubPrSyncService {
           updatedCount++;
         }
       }
+
 
       return updatedCount;
     } catch (err: any) {

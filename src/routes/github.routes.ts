@@ -244,15 +244,32 @@ router.post('/webhook', async (req, res) => {
               },
             });
 
-            await prisma.gamificationPoint.create({
-              data: {
+            const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
+            const prNum = prNumberMatch ? prNumberMatch[1] : (pr.number ? String(pr.number) : null);
+
+            const existingMergePoint = await prisma.gamificationPoint.findFirst({
+              where: {
                 studentId: submission.studentId,
-                pointType: 'task_completion',
-                points: pointsToAward,
-                reason: `PR merged for "${submission.task.title}"`,
-                relatedTaskId: submission.taskId,
+                pointType: 'task_completion_merge',
+                OR: [
+                  { reason: { contains: prUrl } },
+                  ...(prNum ? [{ reason: { contains: `PR #${prNum}` } }] : []),
+                ],
               },
             });
+
+            if (!existingMergePoint) {
+              await prisma.gamificationPoint.create({
+                data: {
+                  studentId: submission.studentId,
+                  pointType: 'task_completion_merge',
+                  points: pointsToAward,
+                  reason: `PR #${prNum || 'merged'} merged for "${submission.task.title}" (${prUrl})`,
+                  relatedTaskId: submission.taskId,
+                },
+              });
+            }
+
 
             if (submission.student?.studentEmail) {
               await sendTaskSubmissionEmail(submission.student.studentEmail, submission.student.studentName || 'Student', {
