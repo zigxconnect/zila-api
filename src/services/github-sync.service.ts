@@ -21,6 +21,16 @@ export class GitHubPrSyncService {
     };
   }
 
+  static parseRepoUrl(url?: string | null): { owner: string; repo: string } | null {
+    if (!url) return null;
+    const match = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git|\/|$)/i);
+    if (!match) return null;
+    return {
+      owner: match[1]!,
+      repo: match[2]!.replace(/\.git$/i, ''),
+    };
+  }
+
   static async fetchPrState(
     owner: string,
     repo: string,
@@ -118,13 +128,17 @@ export class GitHubPrSyncService {
       let updatedCount = 0;
 
       for (const sub of pendingSubmissions) {
-        const parsed = this.parsePrUrl(sub.githubPrUrl);
+        const parsed = this.parsePrUrl(sub.githubPrUrl) || this.parseRepoUrl(sub.githubRepoUrl);
         if (!parsed) continue;
 
-        let ghState = await this.fetchPrState(parsed.owner, parsed.repo, parsed.pullNumber, githubToken);
+        let ghState: GitHubPullResponse | null = null;
+        if ('pullNumber' in parsed && typeof (parsed as any).pullNumber === 'number') {
+          ghState = await this.fetchPrState(parsed.owner, parsed.repo, (parsed as any).pullNumber, githubToken);
+        }
 
-        // If linked PR still open, check for a merged PR on the same branch
-        if (ghState && !ghState.merged && sub.githubBranch) {
+
+        // If linked PR is not merged or missing, check for any merged PR on the same branch
+        if ((!ghState || !ghState.merged) && sub.githubBranch) {
           const branchMerged = await this.findMergedPrOnBranch(
             parsed.owner, parsed.repo, sub.githubBranch, githubToken,
           );
