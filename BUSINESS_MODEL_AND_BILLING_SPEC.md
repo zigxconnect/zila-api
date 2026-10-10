@@ -83,6 +83,22 @@ $$\text{Host Company Share} = 0.10 \times \text{Total Penalty}$$
 - **90% Allocated to Zigex:** Reimburses cloud server execution, AI LLM inference costs (Gemini / Groq / Claude / OpenAI token streams), database bandwidth, and platform maintenance.
 - **10% Allocated to the Host Company:** Compensates the partner company hosting and curating the internship track for mentor engagement and delayed milestone coordination.
 
+```mermaid
+flowchart LR
+    PaymentWebhook["Payment Webhook Triggered"] --> CheckTiming{"Paid before cohort deadline?"}
+    
+    CheckTiming -- On-Time --> StandardTuition["Standard Tuition: 100% Platform Operating Account"]
+    StandardTuition --> UnlockActive["hasPaid = true (Evaluation Fully Active)"]
+
+    CheckTiming -- Post-Deadline --> CalculateSplit["Late Penalty Applied"]
+    CalculateSplit --> Split90["90% Zigex Platform (Inference & Infrastructure)"]
+    CalculateSplit --> Split10["10% Host Company / Partner Organization"]
+    Split90 --> AuditRecord["Write TuitionPenaltySplit Ledger Record"]
+    Split10 --> AuditRecord
+    AuditRecord --> UnlockActive
+```
+
+
 ---
 
 ## 6. Financial Ledger & Audit Trail
