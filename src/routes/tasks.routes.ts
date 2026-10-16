@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/prisma';
 import { SubmissionQuotaService } from '../services/submission-quota.service';
+import { BillingQuotaService } from '../services/billing-quota.service';
 import { ScoringNormalizationService } from '../services/scoring-normalization.service';
 import { CurriculumService } from '../services/curriculum.service';
 import { sendTaskSubmissionEmail } from '../services/email.service';
@@ -116,8 +117,15 @@ router.get('/quota', authMiddleware, async (req: AuthenticatedRequest, res: Resp
       }
     });
 
+    const cohortId = req.query.cohortId as string | undefined;
+    let billing = undefined;
+    if (cohortId) {
+      billing = await BillingQuotaService.checkStudentSubmissionQuota(userId, cohortId);
+    }
+
     return res.json({
-      quota: SubmissionQuotaService.evaluateQuota(countToday)
+      quota: SubmissionQuotaService.evaluateQuota(countToday),
+      billing,
     });
   } catch (error: any) {
     console.error('Error checking PR quota:', error);
@@ -239,6 +247,15 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
     const quota = SubmissionQuotaService.evaluateQuota(countToday);
     if (!quota.allowed) {
       return res.status(429).json({ error: quota.message, quota });
+    }
+
+    // Check tuition / free trial quota (max 5 free tasks for unpaid students)
+    const billing = await BillingQuotaService.checkStudentSubmissionQuota(userId, enrollment.cohortId);
+    if (!billing.allowed) {
+      return res.status(403).json({
+        error: billing.message,
+        billing,
+      });
     }
 
     // Sanitize domain, module and clamp day between 1 and 4

@@ -333,6 +333,7 @@ export class CohortService {
         prisma.cohortStudent.findMany({
           where: { studentId: userId },
           include: {
+            tasksSubmitted: true,
             cohort: {
               include: {
                 _count: {
@@ -354,6 +355,7 @@ export class CohortService {
           prisma.cohortStudent.findMany({
             where: { studentId: userId },
             include: {
+              tasksSubmitted: true,
               cohort: {
                 include: {
                   _count: {
@@ -367,12 +369,47 @@ export class CohortService {
         ).catch(() => []);
       }
 
-      const result = enrolled.map((item) => ({
-        ...item.cohort,
-        enrollmentStatus: item.status,
-        joinedAt: item.joinedAt,
-        studentRole: item.role,
-      }));
+      // Fetch live payment statuses from Supabase Applications table (toggled in Admin Interns Ledger)
+      let profileId = userId;
+      try {
+        const { data: prof } = await supabase
+          .from('student_profiles')
+          .select('id')
+          .or(`user_id.eq.${userId},id.eq.${userId}`)
+          .maybeSingle();
+        if (prof?.id) profileId = prof.id;
+      } catch {}
+
+      const appMap = new Map<string, boolean>();
+      try {
+        const { data: apps } = await supabase
+          .from('Applications')
+          .select('program_id, internship_id, is_paid, payment_completed')
+          .eq('student_id', profileId);
+        if (apps) {
+          for (const a of apps) {
+            const isPaid = Boolean(a.payment_completed || a.is_paid);
+            if (a.program_id) appMap.set(a.program_id, isPaid);
+            if (a.internship_id) appMap.set(a.internship_id, isPaid);
+          }
+        }
+      } catch {}
+
+      const result = enrolled.map((item) => {
+        const programRefId = item.cohort.programId;
+        const isPaid = programRefId ? Boolean(appMap.get(programRefId)) : false;
+        const tasksCount = (item as any).tasksSubmitted ? (item as any).tasksSubmitted.length : 0;
+        return {
+          ...item.cohort,
+          enrollmentStatus: item.status,
+          joinedAt: item.joinedAt,
+          studentRole: item.role,
+          isPaid,
+          tasksSubmittedCount: tasksCount,
+          freeTasksMax: 5,
+          freeTasksRemaining: isPaid ? 999 : Math.max(0, 5 - tasksCount),
+        };
+      });
 
       CacheService.set(cacheKey, result, 120); // 2 minutes TTL
       return result;
