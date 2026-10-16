@@ -100,8 +100,8 @@ export class BillingQuotaService {
       freeTasksUsed: count,
       freeTasksMax: this.FREE_TASKS_LIMIT,
       hasPaid: false,
-      message: `Evaluation paused: Free trial quota exceeded (${this.FREE_TASKS_LIMIT}/${this.FREE_TASKS_LIMIT} tasks used). Payment status for this program is UNPAID in the internship ledger. Please complete tuition to unlock unlimited submissions.`,
-      checkoutUrl: `https://zigex.com/checkout?studentId=${studentId}&cohortId=${cohortId}`,
+      message: `Evaluation paused: Free trial quota exceeded (${this.FREE_TASKS_LIMIT}/${this.FREE_TASKS_LIMIT} tasks used). Please pay for your program tuition at https://zigexconnect.com to resume automated evaluations. If you have already paid, contact the platform administrators to verify your status.`,
+      checkoutUrl: `https://zigexconnect.com/checkout?studentId=${studentId}&cohortId=${cohortId}`,
     };
   }
 
