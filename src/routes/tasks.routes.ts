@@ -210,7 +210,12 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       commitHash,
       summary,
       challenges,
-      deploymentUrl
+      deploymentUrl,
+      proposedMark,
+      cheatingRisk,
+      integrityReport,
+      whatStudentDid,
+      howTheySolved,
     } = req.body;
 
     if (!githubPrUrl) {
@@ -290,9 +295,13 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       });
     }
 
-    // Create submission record
+    // Create submission record with Integrity & Anti-Cheating metadata
+    const parsedProposedMark = proposedMark !== undefined ? Math.max(0.0, Math.min(1.0, Number(proposedMark))) : undefined;
     const submissionContent = [
       `### Exercise Summary\n${summary || 'Automated exercise submission.'}`,
+      whatStudentDid ? `### What Student Did\n${whatStudentDid}` : null,
+      howTheySolved ? `### How They Solved\n${howTheySolved}` : null,
+      `### Supervisor Integrity & Anti-Cheating Audit\n- Status: ${cheatingRisk || 'CLEAN'}\n- Proposed Allocation Mark: ${parsedProposedMark !== undefined ? parsedProposedMark.toFixed(2) + ' / 1.0' : 'N/A'}\n- Findings: ${integrityReport || 'Clean incremental progression; no malpractice detected.'}`,
       challenges ? `### Challenges & Roadblocks\n${challenges}` : null,
       deploymentUrl ? `### Deployment URL\n${deploymentUrl}` : null,
       `### GitHub Metadata\n- PR: ${githubPrUrl}\n- Branch: ${githubBranch || 'automated'}\n- Commit: ${commitHash || 'latest'}`
@@ -322,7 +331,12 @@ router.post('/auto-submit', authMiddleware, async (req: AuthenticatedRequest, re
       message: 'Automated PR task submitted successfully',
       submission,
       quota: SubmissionQuotaService.evaluateQuota(countToday + 1),
-      normalizedWeight: ScoringNormalizationService.getRubric().find(r => r.day === dayNumber)
+      normalizedWeight: ScoringNormalizationService.getRubric().find(r => r.day === dayNumber),
+      antiCheating: {
+        status: cheatingRisk || 'CLEAN',
+        proposedMark: parsedProposedMark,
+        report: integrityReport || 'Clean incremental progression',
+      }
     });
   } catch (error: any) {
     console.error('Error in auto-submit task:', error);
