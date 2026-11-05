@@ -25,17 +25,40 @@ router.get('/me', authMiddleware, async (req: AuthenticatedRequest, res: Respons
         const userId = req.user.sub || req.user.id;
         const role = req.user.role || 'student';
 
-        if (role === 'student') {
+        if (role === 'supervisor') {
+            const { data: supervisor, error } = await supabase
+                .from('supervisor_profiles')
+                .select('*')
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            if (error || !supervisor) {
+                return res.status(404).json({ error: 'Supervisor profile not found.' });
+            }
+            return res.json({ profile: supervisor, type: 'supervisor' });
+        } else if (role === 'student') {
             const { data: student, error } = await supabase
                 .from('student_profiles')
                 .select('*')
                 .eq('user_id', userId)
                 .maybeSingle();
 
-            if (error || !student) {
-                return res.status(404).json({ error: 'Student profile not found.' });
+            if (student) {
+                return res.json({ profile: student, type: 'student' });
             }
-            return res.json({ profile: student, type: 'student' });
+
+            // Fallback: Check if the user is a supervisor even if token has default role
+            const { data: supervisor } = await supabase
+                .from('supervisor_profiles')
+                .select('*')
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            if (supervisor) {
+                return res.json({ profile: supervisor, type: 'supervisor' });
+            }
+
+            return res.status(404).json({ error: 'Student or supervisor profile not found.' });
         } else if (role === 'company') {
             const { data: company, error } = await supabase
                 .from('company_profiles')

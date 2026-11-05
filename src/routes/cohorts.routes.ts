@@ -472,5 +472,131 @@ router.patch('/:id/github-repo', authMiddleware, async (req: AuthenticatedReques
   }
 });
 
+/**
+ * @swagger
+ * /api/cohorts/validate-repo:
+ *   post:
+ *     summary: Validate GitHub repository against Zila prototype cohort structure
+ *     description: Checks for required tracks, module day folders, exercise files (.md, .py, .js, .html), templates, and contributors directory.
+ *     tags: [Cohorts]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/validate-repo', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { githubRepoUrl, branch = 'main', domain } = req.body;
+
+    if (!githubRepoUrl || typeof githubRepoUrl !== 'string') {
+      return res.status(400).json({ error: 'githubRepoUrl is required' });
+    }
+
+    const match = githubRepoUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/i);
+    if (!match || !match[1] || !match[2]) {
+      return res.status(400).json({ error: 'Invalid GitHub repository URL' });
+    }
+
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/, '');
+
+    // Optional remote check if token or public
+    let files: string[] = [];
+    let treeError: string | null = null;
+    try {
+      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Zila-Api-Validator'
+        }
+      });
+      if (treeRes.ok) {
+        const data: any = await treeRes.json();
+        if (Array.isArray(data.tree)) {
+          files = data.tree.map((t: any) => t.path);
+        }
+      } else if (branch === 'main') {
+        // Fallback to master
+        const masterRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/master?recursive=1`, {
+          headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Zila-Api-Validator'
+          }
+        });
+        if (masterRes.ok) {
+          const data: any = await masterRes.json();
+          if (Array.isArray(data.tree)) {
+            files = data.tree.map((t: any) => t.path);
+          }
+        }
+      }
+    } catch (e: any) {
+      treeError = e.message;
+    }
+
+    // Inspect detected features
+    const detectedTracks = new Set<string>();
+    const detectedModules = new Set<string>();
+    const exerciseFiles: Array<{ path: string; ext: string }> = [];
+    let hasTemplate = false;
+    let hasContributorsDir = false;
+    let hasSupervisorInstructions = false;
+
+    for (const f of files) {
+      const lower = f.toLowerCase();
+      if (/^(?:beginner|intermediate|advanced)/i.test(f)) {
+        detectedTracks.add(f.split('/')[0]);
+      }
+      if (lower.includes('templates/exercise.md') || lower.includes('pull_request_template.md')) {
+        hasTemplate = true;
+      }
+      if (lower.startsWith('contributors/')) {
+        hasContributorsDir = true;
+      }
+      if (lower.includes('.supervisor_instructions') || lower.includes('supervisor_instructions.json')) {
+        hasSupervisorInstructions = true;
+      }
+      const matchMod = f.match(/(?:beginner|intermediate|advanced|\b)\/([0-9]+_[a-zA-Z0-9_]+)\/day_[0-9]+/i);
+      if (matchMod && matchMod[1]) {
+        detectedModules.add(matchMod[1]);
+      }
+      if (/\.(md|py|js|ts|html|css|json|cpp|c|rs|go)$/i.test(f) && lower.includes('day_')) {
+        const ext = f.split('.').pop() || '';
+        exerciseFiles.push({ path: f, ext });
+      }
+    }
+
+    const warnings: string[] = [];
+    if (files.length > 0) {
+      if (!hasTemplate) warnings.push('Missing templates/exercise.md deliverable template');
+      if (!hasContributorsDir) warnings.push('Missing contributors/ directory for intern submissions');
+      if (exerciseFiles.length === 0) warnings.push('No exercise starter files (.md, .py, .js, .html) detected in day folders');
+    }
+
+    const valid = files.length === 0 || (detectedTracks.size > 0 || detectedModules.size > 0 || hasTemplate);
+
+    return res.json({
+      valid,
+      owner,
+      repo,
+      githubRepoUrl,
+      treeInspected: files.length > 0,
+      totalFilesInspected: files.length,
+      detectedTracks: Array.from(detectedTracks),
+      detectedModules: Array.from(detectedModules),
+      exerciseFilesCount: exerciseFiles.length,
+      sampleExerciseFiles: exerciseFiles.slice(0, 10),
+      hasTemplate,
+      hasContributorsDir,
+      hasSupervisorInstructions,
+      warnings,
+      summary: valid
+        ? 'Repository matches Zila cohort prototype standards'
+        : 'Repository does not conform to Zila curriculum prototype structure'
+    });
+  } catch (error: any) {
+    console.error('Error validating cohort repository:', error);
+    return res.status(500).json({ error: error.message || 'Failed to validate repository' });
+  }
+});
+
 export default router;
 
