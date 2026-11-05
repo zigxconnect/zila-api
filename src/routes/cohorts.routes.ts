@@ -456,19 +456,43 @@ router.patch('/:id/github-repo', authMiddleware, async (req: AuthenticatedReques
     const { id } = req.params;
     const { githubRepoUrl } = req.body;
 
-    if (!githubRepoUrl || typeof githubRepoUrl !== 'string') {
-      return res.status(400).json({ error: 'githubRepoUrl is required and must be a valid string' });
-    }
+    const normalizedUrl = (typeof githubRepoUrl === 'string' && githubRepoUrl.trim().length > 0)
+      ? githubRepoUrl.trim()
+      : null;
 
-    const updated = await CohortService.updateCohortRepo(id, githubRepoUrl.trim());
+    const updated = await CohortService.updateCohortRepo(id, normalizedUrl);
     return res.json({
       success: true,
-      message: 'Cohort GitHub repository updated successfully',
+      message: normalizedUrl ? 'Cohort GitHub repository updated successfully' : 'Cohort GitHub repository detached successfully',
       cohort: updated,
     });
   } catch (error: any) {
     console.error('Error updating cohort GitHub repository:', error);
     return res.status(500).json({ error: 'Failed to update cohort repository' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/cohorts/{id}/github-repo:
+ *   delete:
+ *     summary: Detach / unlink GitHub repository from a cohort
+ *     tags: [Cohorts]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.delete('/:id/github-repo', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const updated = await CohortService.updateCohortRepo(id, null);
+    return res.json({
+      success: true,
+      message: 'Cohort GitHub repository detached successfully',
+      cohort: updated,
+    });
+  } catch (error: any) {
+    console.error('Error detaching cohort GitHub repository:', error);
+    return res.status(500).json({ error: 'Failed to detach cohort repository' });
   }
 });
 

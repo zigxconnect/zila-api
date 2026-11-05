@@ -574,9 +574,9 @@ export class CohortService {
   }
 
   /**
-   * Update GitHub repository URL for a cohort program
+   * Update GitHub repository URL for a cohort program (or detach with null)
    */
-  static async updateCohortRepo(cohortId: string, githubRepoUrl: string) {
+  static async updateCohortRepo(cohortId: string, githubRepoUrl: string | null) {
     const updated = await prisma.cohort.update({
       where: { id: cohortId },
       data: { githubRepoUrl },
