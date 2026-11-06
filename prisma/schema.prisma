@@ -317,3 +317,34 @@ model SupervisorFeedback {
   @@index([supervisorId])
   @@index([cohortId])
 }
+
+// ============================================
+// AI CHAT PERSISTENCE (NEON DB)
+// ============================================
+
+model ChatSession {
+  id           String              @id @default(cuid())
+  studentEmail String
+  cohortId     String?
+  title        String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  messages     ChatMessageRecord[]
+
+  @@index([studentEmail])
+  @@index([cohortId])
+}
+
+model ChatMessageRecord {
+  id        String      @id @default(cuid())
+  sessionId String
+  role      String      // "user" | "assistant"
+  content   String      @db.Text
+  createdAt DateTime    @default(now())
+
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
